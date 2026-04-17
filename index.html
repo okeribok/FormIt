@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Inkoopkader</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #fffff8;
+  --text:     #111111;
+  --muted:    #999990;
+  --border:   #d8d8cc;
+  --hl:       #fff3a0;
+  --hl-edge:  #c8a800;
+  --chip-bg:  #f5f3ea;
+  --user-bg:  #eeede6;
+  --serif:    Georgia, 'Times New Roman', serif;
+  --sans:     'Gill Sans', Optima, Calibri, 'Trebuchet MS', sans-serif;
+  --mono:     'Menlo', 'Consolas', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--serif); font-size: 15px; }
+
+/* ── Main grid ─────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: 55fr 45fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Left: document pane ───────────────────────────────── */
+#left {
+  position: relative;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+#doc-scroll {
+  height: 100%;
+  overflow-y: scroll;
+  padding: 2.2rem 3rem 3rem 3rem;
+  scroll-behavior: smooth;
+}
+
+/* Chrome-find-style tick overlay */
+#ticks {
+  position: absolute;
+  top: 0; right: 0;
+  width: 10px;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9;
+}
+.tick {
+  position: absolute;
+  left: 1px; right: 1px;
+  height: 4px;
+  background: var(--hl-edge);
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+/* Highlighted element */
+.hl {
+  background: var(--hl);
+  box-shadow: 2px 0 0 0 var(--hl-edge) inset;
+  padding-left: 0.4rem !important;
+  transition: background 0.15s;
+}
+
+/* ── Right column ──────────────────────────────────────── */
+#right {
+  display: grid;
+  grid-template-rows: 38fr 62fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Pane chrome ───────────────────────────────────────── */
+.pane-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.9rem;
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pane-bar button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+.pane-bar button:hover { color: var(--text); }
+
+/* ── Briefing pane ─────────────────────────────────────── */
+#briefing-pane {
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#briefing-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.3rem;
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+#briefing-scroll h1,
+#briefing-scroll h2 { font-size: 0.88rem; font-weight: bold; margin: 1rem 0 0.25rem; font-family: var(--sans); letter-spacing: 0.02em; }
+#briefing-scroll h3  { font-size: 0.84rem; font-weight: bold; font-style: italic; margin: 0.7rem 0 0.2rem; }
+#briefing-scroll p   { margin-bottom: 0.55rem; }
+#briefing-scroll ul,
+#briefing-scroll ol  { padding-left: 1.2rem; margin-bottom: 0.55rem; }
+#briefing-scroll li  { margin-bottom: 0.2rem; }
+#briefing-scroll strong { font-weight: bold; }
+
+#briefing-empty {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.83rem;
+  padding: 0.3rem 0;
+}
+
+/* ── Chat pane ─────────────────────────────────────────── */
+#chat-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.msg {
+  font-size: 0.84rem;
+  max-width: 94%;
+  line-height: 1.55;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--user-bg);
+  border-radius: 3px;
+  padding: 0.4rem 0.65rem;
+}
+
+.msg.assistant { align-self: flex-start; }
+
+.msg-text { white-space: pre-wrap; word-break: break-word; }
+
+/* Highlight chips inside chat bubbles */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.chip {
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border: 1px solid var(--hl-edge);
+  border-radius: 10px;
+  background: var(--chip-bg);
+  cursor: pointer;
+  color: #5a4800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  transition: background 0.1s;
+}
+.chip:hover, .chip.on { background: var(--hl); }
+
+.thinking {
+  font-style: italic;
+  color: var(--muted);
+  font-size: 0.8rem;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity:0.5 } 50% { opacity:1 } }
+
+/* ── Chat input ────────────────────────────────────────── */
+#input-area {
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+#chat-input {
+  flex: 1;
+  font-family: var(--serif);
+  font-size: 0.84rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  resize: none;
+  height: 60px;
+  border-radius: 2px;
+}
+#chat-input:focus { outline: none; border-color: #aaa; }
+
+#send-btn {
+  padding: 0 1rem;
+  background: #1a1a1a;
+  color: var(--bg);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  align-self: flex-end;
+  height: 32px;
+  flex-shrink: 0;
+}
+#send-btn:hover   { background: #333; }
+#send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Document typography ───────────────────────────────── */
+#doc-content h1  { font-size: 1.2rem;  font-weight: normal; margin: 2rem 0 0.6rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+#doc-content h2  { font-size: 1.0rem;  font-weight: normal; margin: 1.4rem 0 0.4rem; }
+#doc-content h3  { font-size: 0.92rem; font-weight: bold;   margin: 1.1rem 0 0.3rem; }
+#doc-content h4  { font-size: 0.88rem; font-weight: bold;   font-style: italic; margin: 0.9rem 0 0.25rem; }
+#doc-content p   { margin-bottom: 0.65rem; line-height: 1.65; }
+#doc-content ul,
+#doc-content ol  { padding-left: 1.5rem; margin-bottom: 0.65rem; }
+#doc-content li  { margin-bottom: 0.25rem; line-height: 1.55; }
+#doc-content hr  { border: none; border-top: 1px solid var(--border); margin: 1.2rem 0; }
+#doc-content blockquote { border-left: 3px solid var(--border); padding-left: 0.9rem; color: #555; font-style: italic; margin: 0.6rem 0; }
+#doc-content strong { font-weight: bold; }
+#doc-content em { font-style: italic; }
+
+/* ── Config modal ──────────────────────────────────────── */
+#cfg-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,248,0.97);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+#cfg-box {
+  width: 500px;
+  border: 1px solid var(--border);
+  padding: 2.2rem 2.5rem;
+  background: var(--bg);
+}
+
+#cfg-box h1 {
+  font-size: 1.05rem;
+  font-weight: normal;
+  margin-bottom: 0.3rem;
+}
+#cfg-box p.sub {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 1.6rem;
+  font-family: var(--sans);
+}
+
+.field { margin-bottom: 1rem; }
+.field label {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+.field input,
+.field textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 2px;
+}
+.field textarea {
+  height: 140px;
+  resize: vertical;
+  font-family: var(--serif);
+  font-size: 0.8rem;
+}
+
+#cfg-start {
+  width: 100%;
+  padding: 0.55rem;
+  background: #1a1a1a;
+  color: var(--bg);
+  border: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  border-radius: 2px;
+  margin-top: 0.3rem;
+}
+#cfg-start:hover { background: #333; }
+</style>
+</head>
+<body>
+
+<!-- ── CONFIG MODAL ─────────────────────────────────────── -->
+<div id="cfg-modal">
+  <div id="cfg-box">
+    <h1>AI Inkoopkader Assistent</h1>
+    <p class="sub">Breng een inkoopcase in. De assistent helpt u het kader toe te passen en stelt een leveranciersbriefing op.</p>
+
+    <div class="field">
+      <label>API endpoint (llama.cpp / OpenAI-compatibel)</label>
+      <input id="cfg-endpoint" type="text" value="http://localhost:8080/v1/chat/completions">
+    </div>
+
+    <div class="field">
+      <label>Modelnaam</label>
+      <input id="cfg-model" type="text" value="granite-4-32b">
+    </div>
+
+    <div class="field">
+      <label>Document — plak hier de volledige tekst van het Addendum AI</label>
+      <textarea id="cfg-doc" placeholder="Plak hier de markdown-tekst van het Addendum AI..."></textarea>
+    </div>
+
+    <button id="cfg-start">Starten</button>
+  </div>
+</div>
+
+<!-- ── MAIN APP ──────────────────────────────────────────── -->
+<div id="app">
+
+  <!-- LEFT: document -->
+  <div id="left">
+    <div id="doc-scroll">
+      <div id="doc-content"></div>
+    </div>
+    <div id="ticks"></div>
+  </div>
+
+  <!-- RIGHT: briefing + chat -->
+  <div id="right">
+
+    <div id="briefing-pane">
+      <div class="pane-bar">
+        <span>Leveranciersbriefing</span>
+        <button id="copy-btn" title="Kopieer als markdown">⎘ kopieer</button>
+      </div>
+      <div id="briefing-scroll">
+        <div id="briefing-empty">De briefing verschijnt hier terwijl u de casus bespreekt.</div>
+        <div id="briefing-content"></div>
+      </div>
+    </div>
+
+    <div id="chat-pane">
+      <div class="pane-bar"><span>Gesprek</span></div>
+      <div id="chat-messages"></div>
+      <div id="input-area">
+        <textarea id="chat-input" placeholder="Beschrijf de inkoop, het systeem of de leverancier — of stel een vraag over het kader…"></textarea>
+        <button id="send-btn">Stuur</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────
+const S = {
+  endpoint:      '',
+  model:         '',
+  docText:       '',
+  messages:      [],   // full OpenAI-format history
+  briefingMd:    '',   // accumulated markdown
+  activeChipsEl: null  // the .chips div whose highlights are active
+};
+
+// ── Config ─────────────────────────────────────────────────
+document.getElementById('cfg-start').addEventListener('click', () => {
+  const endpoint = document.getElementById('cfg-endpoint').value.trim();
+  const model    = document.getElementById('cfg-model').value.trim();
+  const doc      = document.getElementById('cfg-doc').value.trim();
+
+  if (!doc) { alert('Plak eerst het document.'); return; }
+
+  S.endpoint  = endpoint;
+  S.model     = model;
+  S.docText   = doc;
+  S.messages  = [{ role: 'system', content: systemPrompt(doc) }];
+
+  renderDoc(doc);
+  document.getElementById('cfg-modal').style.display = 'none';
+  document.getElementById('chat-input').focus();
+});
+
+// ── System prompt ──────────────────────────────────────────
+function systemPrompt(doc) {
+  return `Je bent een AI-inkoopkaderadviseur voor overheidsinkopers. Je helpt inkopers het Addendum AI begrijpen en toepassen op een concrete inkoopcase, en stelt stapsgewijs een leveranciersbriefing op.
+
+Het volledige Addendum AI staat hieronder:
+
+---
+${doc}
+---
+
+Reageer UITSLUITEND met geldig JSON in dit exacte formaat, zonder preamble, toelichting of codeblokken:
+{
+  "reply": "je antwoord in het Nederlands",
+  "highlights": ["verbatim tekstfragment uit het document", "eventueel een tweede"],
+  "briefing": "markdown tekst om toe te voegen aan de briefing, of null"
+}
+
+Regels:
+- reply: concreet en bondig. Verwijs naar specifieke artikelen en sporen. Maximaal 3 alinea's. Geen opsommingen tenzij inhoudelijk nodig.
+- highlights: kopieer letterlijk korte, relevante passages (15–60 woorden) uit het document. Maximaal 3. Lege array [] als niets direct relevant is.
+- briefing: alleen invullen als er een concrete, inkoopspecifieke eis of aandachtspunt te formuleren is voor de leverancier. Gebruik ## headers. Herhaal niets wat al in de briefing staat. null als er niets toe te voegen is.
+- Antwoord altijd in het Nederlands.`;
+}
+
+// ── Document rendering ─────────────────────────────────────
+function renderDoc(text) {
+  const content = document.getElementById('doc-content');
+  content.innerHTML = marked.parse(text);
+
+  // Tag every leaf element for highlighting
+  content.querySelectorAll('p, li, h1, h2, h3, h4, h5, blockquote').forEach(el => {
+    // Normalize whitespace for reliable matching
+    el.dataset.t = el.textContent.replace(/\s+/g, ' ').toLowerCase().trim();
+  });
+}
+
+// ── Highlight machinery ────────────────────────────────────
+function clearHighlights() {
+  document.querySelectorAll('#doc-content .hl').forEach(el => el.classList.remove('hl'));
+  document.getElementById('ticks').innerHTML = '';
+}
+
+// Activate all fragments for a message (show ticks + apply .hl)
+function activateFragments(fragments) {
+  clearHighlights();
+  if (!fragments || !fragments.length) return;
+
+  const scroll  = document.getElementById('doc-scroll');
+  const content = document.getElementById('doc-content');
+  const allEls  = content.querySelectorAll('[data-t]');
+  const matched = [];
+
+  for (const frag of fragments) {
+    if (!frag || frag.trim().length < 8) continue;
+    const needle = frag.replace(/\s+/g, ' ').toLowerCase().trim();
+    // Use first 60 chars to stay inside a single element's text
+    const short  = needle.slice(0, 60);
+
+    for (const el of allEls) {
+      if (el.dataset.t.includes(short)) {
+        el.classList.add('hl');
+        matched.push(el);
+        break;
+      }
+    }
+  }
+
+  renderTicks(matched, scroll);
+}
+
+// Scroll to the element matching a specific fragment
+function scrollToFragment(frag) {
+  if (!frag || frag.trim().length < 8) return;
+  const needle = frag.replace(/\s+/g, ' ').toLowerCase().trim().slice(0, 60);
+  const allEls = document.querySelectorAll('#doc-content [data-t]');
+  for (const el of allEls) {
+    if (el.dataset.t.includes(needle)) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      break;
+    }
+  }
+}
+
+// Render yellow tick marks in the scrollbar overlay
+function renderTicks(elements, scrollContainer) {
+  const ticks    = document.getElementById('ticks');
+  ticks.innerHTML = '';
+  const H        = scrollContainer.scrollHeight;
+  const contTop  = scrollContainer.getBoundingClientRect().top;
+
+  elements.forEach(el => {
+    const elTop = el.getBoundingClientRect().top - contTop + scrollContainer.scrollTop;
+    const pct   = Math.max(0, Math.min(98, (elTop / H) * 100));
+    const tick  = document.createElement('div');
+    tick.className = 'tick';
+    tick.style.top = pct.toFixed(2) + '%';
+    ticks.appendChild(tick);
+  });
+}
+
+// ── Briefing ───────────────────────────────────────────────
+function appendBriefing(md) {
+  if (!md || !md.trim()) return;
+  document.getElementById('briefing-empty').style.display = 'none';
+  S.briefingMd += '\n\n' + md.trim();
+  document.getElementById('briefing-content').innerHTML = marked.parse(S.briefingMd.trim());
+  const bs = document.getElementById('briefing-scroll');
+  bs.scrollTop = bs.scrollHeight;
+}
+
+document.getElementById('copy-btn').addEventListener('click', () => {
+  if (!S.briefingMd.trim()) return;
+  navigator.clipboard.writeText(S.briefingMd.trim()).then(() => {
+    const btn = document.getElementById('copy-btn');
+    const orig = btn.textContent;
+    btn.textContent = '✓ gekopieerd';
+    setTimeout(() => btn.textContent = orig, 1800);
+  });
+});
+
+// ── Chat UI ────────────────────────────────────────────────
+function chipLabel(frag) {
+  // Try to extract an article/spoor reference from the start
+  const m = frag.match(/^(Artikel\s+\d+[a-z]?(?:[.,]\s*(?:lid\s+\d+|spoor\s+\d+))?|Spoor\s+\d+|Lid\s+\d+)/i);
+  if (m) return '§\u202f' + m[0];
+  return '§\u202f' + frag.trim().slice(0, 36) + (frag.trim().length > 36 ? '…' : '');
+}
+
+function addUserMsg(text) {
+  const c = document.getElementById('chat-messages');
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.innerHTML = `<div class="msg-text">${escHtml(text)}</div>`;
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+}
+
+function addAssistantMsg(text, fragments) {
+  const c = document.getElementById('chat-messages');
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'msg-text';
+  textDiv.textContent = text;
+  d.appendChild(textDiv);
+
+  const validFrags = (fragments || []).filter(f => f && f.trim().length >= 8);
+
+  if (validFrags.length) {
+    const chipsDiv = document.createElement('div');
+    chipsDiv.className = 'chips';
+
+    validFrags.forEach(frag => {
+      const chip = document.createElement('button');
+      chip.className = 'chip';
+      chip.title = frag;
+      chip.textContent = chipLabel(frag);
+
+      chip.addEventListener('click', () => {
+        // Deactivate previous message's chips
+        if (S.activeChipsEl && S.activeChipsEl !== chipsDiv) {
+          S.activeChipsEl.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+        }
+        // Activate all chips in this message (full tick set)
+        chipsDiv.querySelectorAll('.chip').forEach(c => c.classList.add('on'));
+        S.activeChipsEl = chipsDiv;
+        activateFragments(validFrags);
+        // Scroll to this specific fragment
+        scrollToFragment(frag);
+      });
+
+      chipsDiv.appendChild(chip);
+    });
+
+    d.appendChild(chipsDiv);
+
+    // Auto-activate latest message after DOM settles
+    setTimeout(() => {
+      if (S.activeChipsEl) {
+        S.activeChipsEl.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+      }
+      chipsDiv.querySelectorAll('.chip').forEach(c => c.classList.add('on'));
+      S.activeChipsEl = chipsDiv;
+      activateFragments(validFrags);
+    }, 80);
+  }
+
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+}
+
+function addThinking() {
+  const c = document.getElementById('chat-messages');
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+  d.innerHTML = '<span class="thinking">…</span>';
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+  return d;
+}
+
+// ── API call ───────────────────────────────────────────────
+async function send(userText) {
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+
+  S.messages.push({ role: 'user', content: userText });
+  addUserMsg(userText);
+
+  const thinking = addThinking();
+
+  try {
+    const res = await fetch(S.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model:       S.model,
+        messages:    contextWindow(),
+        temperature: 0.25,
+        max_tokens:  1200
+      })
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status} — ${await res.text()}`);
+
+    const data = await res.json();
+    const raw  = data.choices?.[0]?.message?.content || '';
+
+    S.messages.push({ role: 'assistant', content: raw });
+
+    thinking.remove();
+
+    const parsed = parseResponse(raw);
+    addAssistantMsg(parsed.reply, parsed.highlights);
+    if (parsed.briefing) appendBriefing(parsed.briefing);
+
+  } catch (err) {
+    thinking.remove();
+    addAssistantMsg(`Fout bij API-aanroep: ${err.message}`, []);
+  }
+
+  btn.disabled = false;
+}
+
+// Keep system prompt + last 20 messages to manage context window
+function contextWindow() {
+  const sys  = S.messages[0];
+  const rest = S.messages.slice(1);
+  return [sys, ...rest.slice(-20)];
+}
+
+function parseResponse(raw) {
+  const fallback = { reply: raw.trim(), highlights: [], briefing: null };
+  let text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+
+  const tryParse = (s) => {
+    try {
+      const o = JSON.parse(s);
+      return {
+        reply:      String(o.reply      || '').trim(),
+        highlights: Array.isArray(o.highlights) ? o.highlights.filter(Boolean) : [],
+        briefing:   o.briefing ? String(o.briefing).trim() : null
+      };
+    } catch { return null; }
+  };
+
+  return tryParse(text) || (() => {
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? (tryParse(m[0]) || fallback) : fallback;
+  })();
+}
+
+// ── Input handling ─────────────────────────────────────────
+document.getElementById('send-btn').addEventListener('click', handleSend);
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+});
+
+function handleSend() {
+  const input = document.getElementById('chat-input');
+  const text  = input.value.trim();
+  if (!text || !S.endpoint) return;
+  input.value = '';
+  input.style.height = '60px';
+  send(text);
+}
+
+// Auto-resize textarea
+document.getElementById('chat-input').addEventListener('input', function() {
+  this.style.height = '60px';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ── Utilities ──────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
