@@ -3,11 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fietsbel CE - Deterministic RAG</title>
+<title>Fietsbel CE v6 - Deterministic RAG (2026 SOTA)</title>
 <!-- Local offline markdown parser -->
 <script src="marked.min.js"></script>
 <!-- transformers.min.js is loaded dynamically on demand — place next to index.html -->
-<!-- Download from: https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js -->
 <style>
 :root {
   --bg: #f9f9f9; --pane-bg: #ffffff; --text: #222;
@@ -63,8 +62,21 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 .msg { max-width: 90%; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.95rem; line-height: 1.5; }
 .msg.user { align-self: flex-end; background: var(--user-msg); border: 1px solid #dce8f6; }
 .msg.bot { align-self: flex-start; background: var(--sys-msg); border: 1px solid #e5e5e5; }
+
+/* Streaming placeholder pulse */
+.msg.bot.streaming {
+  color: var(--muted);
+  font-style: italic;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
 .citation-chip { display: inline-block; font-family: var(--font-mono); font-size: 0.75rem; background: #e0e0e0; padding: 4px 8px; border-radius: 4px; margin-top: 8px; margin-right: 5px; color: #333; cursor: pointer; transition: background 0.2s; }
 .citation-chip:hover { background: #d0d0d0; }
+.citation-chip.chip-active { background: var(--hl); color: #222; box-shadow: 0 0 0 1px #e6c84c; }
 
 #input-area { padding: 1rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem; background: #fafafa; flex-shrink: 0; }
 #chat-input { flex: 1; padding: 0.6rem; border: 1px solid var(--border); border-radius: 4px; font-family: var(--font-sans); font-size: 0.95rem; resize: none; height: 50px; }
@@ -75,19 +87,16 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 
 <!-- SETUP MODAL -->
 <div id="overlay">
-
-  <!-- STAP 1: Backend keuze -->
   <div class="modal-box" id="box-choice">
-    <h2>Fietsbel CE — Kies backend</h2>
-    <p class="sub">LM Studio vereist een lokale server en is snel. Browser AI draait volledig in de browser via Transformers.js — geen server nodig, maar eerste gebruik vereist ~2GB download.</p>
+    <h2>Fietsbel CE v6 — Kies backend</h2>
+    <p class="sub">LM Studio vereist een lokale server. Browser AI draait volledig in de browser via Transformers.js v4.2+.</p>
     <button id="btn-choose-lms" style="margin-bottom:0.5rem;">🖥 LM Studio &nbsp;— lokaal, snel</button>
     <button id="btn-choose-tjs">🌐 Browser AI &nbsp;— geen server nodig</button>
   </div>
 
-  <!-- STAP 2a: LM Studio config -->
   <div class="modal-box" id="box-lmstudio" style="display:none;">
-    <h2>Fietsbel CE — LM Studio</h2>
-    <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld.</p>
+    <h2>Fietsbel CE v6 — LM Studio</h2>
+    <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld. <em>Reranking is niet beschikbaar via LM Studio (geen /v1/rerank endpoint) — retrieval werkt hier via hybride vector+keyword. Gebruik Browser AI voor volledige pipeline inclusief reranker.</em></p>
     <div class="field">
       <label>API Endpoint (LM Studio)</label>
       <input type="text" id="cfg-url" value="http://127.0.0.1:1234">
@@ -97,11 +106,11 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
     </div>
     <div id="model-selects" style="display:none; margin-top: 1.5rem;">
       <div class="field">
-        <label>Chat Model (bv. Granite)</label>
+        <label>Chat Model</label>
         <select id="cfg-chat"></select>
       </div>
       <div class="field">
-        <label>Embedding Model (bv. Nomic)</label>
+        <label>Embedding Model</label>
         <select id="cfg-embed"></select>
       </div>
       <div class="field">
@@ -112,10 +121,9 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
     </div>
   </div>
 
-  <!-- STAP 2b: Transformers.js setup -->
   <div class="modal-box" id="box-tjs" style="display:none;">
-    <h2>Fietsbel CE — Browser AI</h2>
-    <p class="sub">Modellen worden gedownload van HuggingFace CDN en gecached in de browser. Eerste gebruik vereist een internetverbinding.</p>
+    <h2>Fietsbel CE v6 — Browser AI</h2>
+    <p class="sub">Modellen worden gedownload van HuggingFace CDN. Bevat Nomic 1.5 (q4), BGE Reranker base (Xenova, browser-compatibel) en Granite 4.0 Micro.</p>
     <button id="btn-tjs-load">⬇ Download &amp; Laad Modellen</button>
     <div id="tjs-model-progress" style="display:none; margin-top:1rem;">
       <div id="tjs-prog-text" style="font-size:0.85rem; color:var(--muted); margin-bottom:0.3rem;">Laden...</div>
@@ -130,14 +138,12 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
     </div>
   </div>
 
-  <!-- Gedeelde embedding voortgangsbalk (buiten de modal-boxes) -->
   <div id="progress-container" style="display:none; margin-top:1rem; width:450px; text-align:center;">
     <div id="progress-text" style="font-size:0.85rem; font-weight:bold; color:var(--muted);">Documenten verwerken...</div>
     <div id="progress-bar-embed" style="margin-top:0.5rem; background:#eee; border-radius:4px; overflow:hidden; height:8px;">
       <div id="progress-fill" style="width:0%; height:100%; background:var(--primary); transition:width 0.2s;"></div>
     </div>
   </div>
-
 </div>
 
 <!-- MAIN UI -->
@@ -148,13 +154,13 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
   </div>
   <div id="right-pane">
     <div id="state-pane">
-      <div class="pane-header">Actuele Situatie & Intentie (JSON)</div>
+      <div class="pane-header">Actuele Situatie, Intentie & Redenering (JSON)</div>
       <div id="state-content">{
   "status": "Wachtend op invoer..."
 }</div>
     </div>
     <div id="chat-pane">
-      <div class="pane-header">Multidisciplinair Overleg</div>
+      <div class="pane-header">Fietsbel CE v6 — Multidisciplinair Overleg</div>
       <div id="chat-history"></div>
       <div id="input-area">
         <textarea id="chat-input" placeholder="Stel een vraag over de documenten..."></textarea>
@@ -165,25 +171,25 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 </div>
 
 <script>
-// Prevent crash if markdown parser is missing
 if (typeof marked === 'undefined') {
     alert("CRITICAL ERROR: marked.min.js ontbreekt.\nDownload dit bestand en plaats het in dezelfde map als index.html om offline te kunnen werken.");
 }
 
-// ── GLOBAL STATE ──
 const State = {
     url: "http://127.0.0.1:1234",
     chatModel: "",
     embedModel: "",
-    backend: null,           // 'lmstudio' | 'transformers'
-    tjsEmbedPipeline: null,  // Transformers.js embed pipeline
-    tjsLLMPipeline: null,    // Transformers.js LLM pipeline
-    chunks: [], // Array of { id, docName, text, vector: [] }
+    backend: null,
+    tjsEmbedPipeline: null,
+    tjsLLMPipeline: null,
+    tjsRerankTokenizer: null,  // AutoTokenizer for cross-encoder reranker
+    tjsRerankModel: null,      // AutoModelForSequenceClassification for reranker
+    TextStreamer: null,
+    chunks: [],
     chatHistory: [],
     jsonState: { intent: "Onbekend", facts_gathered: [] }
 };
 
-// ── BACKEND KEUZE ──
 document.getElementById('btn-choose-lms').addEventListener('click', () => {
     State.backend = 'lmstudio';
     document.getElementById('box-choice').style.display = 'none';
@@ -196,7 +202,6 @@ document.getElementById('btn-choose-tjs').addEventListener('click', () => {
     document.getElementById('box-tjs').style.display = 'block';
 });
 
-// ── SETUP & INIT ──
 document.getElementById('btn-fetch').addEventListener('click', async () => {
     State.url = document.getElementById('cfg-url').value.replace(/\/+$/, '');
     const btn = document.getElementById('btn-fetch');
@@ -216,7 +221,6 @@ document.getElementById('btn-fetch').addEventListener('click', async () => {
             eSel.add(new Option(m, m));
         });
         
-        // Auto-guess defaults if possible
         models.forEach((m, i) => {
             if(m.toLowerCase().includes('nomic') || m.toLowerCase().includes('embed')) eSel.selectedIndex = i;
             if(m.toLowerCase().includes('granite') || m.toLowerCase().includes('instruct')) cSel.selectedIndex = i;
@@ -240,7 +244,6 @@ document.getElementById('btn-start').addEventListener('click', async () => {
     await initAndStart(files);
 });
 
-// ── GEDEELDE INIT LOGICA ──
 async function initAndStart(files) {
     document.getElementById('progress-container').style.display = 'block';
 
@@ -252,76 +255,123 @@ async function initAndStart(files) {
 
     const loadedFileNames = Array.from(files).map(f => f.name);
     const fileListStr = loadedFileNames.join(', ');
+    const exampleFile = loadedFileNames[0] || 'document.md';
+    const exampleChunkId = `${exampleFile}_3`;
 
-    State.chatHistory.push({
-        role: "system",
-        content: `Je bent Fietsbel CE, een strikte, deterministische overheid-assistent. Je antwoordt altijd in het Nederlands.
-Je krijgt CONTEXT mee met genummerde chunks. Gebruik ALLEEN de informatie uit de context. Verzin niets.
+State.chatHistory.push({
+    role: "system",
+    content: `Role: Strict Deterministic RAG Analyst.
+Language Rule: Respond in the SAME language as the User's Question.
+Constraint: Use ONLY provided context. If info is missing, state "Insufficient information found."
 
-De beschikbare documenten zijn: ${fileListStr}
+Input Data:
+Documents: ${fileListStr}
+Context Blocks: [Doc: <name>, ChunkId: <name>_<N>]
+(Use the exact ChunkId from the header, e.g., "${exampleChunkId}")
 
-Elke context-blok heeft het formaat: [Doc: <naam>, ChunkId: <naam>_<N>]
-Gebruik de exacte ChunkId uit de context voor elke citatie. Citeer ALLE chunks die je gebruikt hebt.
+Reasoning Protocol (Internal Step-by-Step):
+1. Analyze User Query to describe what a suitable answer would look like
+2. Iterate through Context Blocks (Highest relevance to lowest):
+   - Extract relevant facts.
+   - Update current hypothesis/answer.
+   - Falsify previous assumptions if new block contradicts.
+3. Final Decision:
+   - If confidence is HIGH: Synthesize actionable "Next Step".
+   - If confidence is LOW: State "Insufficient information found."
 
-Je MOET je antwoord in exact dit JSON formaat sturen, zonder extra tekst of backticks:
+Output Format (STRICT JSON ONLY, no markdown/backticks):
 {
-  "reply": "Jouw duidelijke, menselijke antwoord op de vraag. Alleen platte tekst — geen markdown, geen URLs, geen aanhalingstekens.",
-  "state_update": { "intent": "wat de gebruiker wil", "facts_gathered": ["feit 1", "feit 2"] },
+  "reply": "<Final answer in User's Language. Actionable or 'Insufficient info'>",
+  "state_update": { "intent": "<User intent>", "facts_gathered": ["<fact 1>", "<fact 2>"] },
   "citations": [
-    { "document": "bestand-a.md", "chunkId": "bestand-a.md_3" },
-    { "document": "bestand-b.md", "chunkId": "bestand-b.md_7" }
+    { "document": "${exampleFile}", "chunkId": "${exampleChunkId}" }
   ]
 }
 
-De citations array bevat één entry per chunk die je daadwerkelijk hebt gebruikt. Kopieer de ChunkId letterlijk uit de context-header.`
-    });
-
+Note: Copy ChunkId exactly. Do not invent IDs. Do not add extra text.`
+});
+   
     document.getElementById('overlay').style.display = 'none';
 }
 
-// ── TRANSFORMERS.JS BACKEND ──
 async function loadTransformersBackend(onProgress) {
-    // Dynamically import the local transformers.min.js (ES module, works from http://)
-    let pipeline, env;
+    let pipeline, env, TextStreamer;
+    let AutoTokenizer, AutoModel, AutoModelForSequenceClassification, mean_pooling, layer_norm; 
     try {
-        ({ pipeline, env } = await import('./transformers.min.js'));
+        ({ 
+            pipeline, env, TextStreamer, 
+            AutoTokenizer, AutoModel, AutoModelForSequenceClassification,
+            mean_pooling, layer_norm 
+        } = await import('./transformers.min.js'));
     } catch(e) {
-        throw new Error("transformers.min.js niet gevonden naast index.html. Download het via de link in de HTML-comments.");
+        throw new Error("transformers.min.js niet gevonden naast index.html.");
     }
 
-    env.allowLocalModels  = false;   // Force CDN download
+    State.TextStreamer = TextStreamer;
+    State.tjsMath = { mean_pooling, layer_norm }; 
+
+    env.allowLocalModels  = false;
     env.allowRemoteModels = true;
-    env.useBrowserCache   = true;    // Keeps models in browser after first load
+    env.useBrowserCache   = true;
 
     const embedDevice = (typeof navigator.gpu !== 'undefined') ? 'webgpu' : 'wasm';
 
-    onProgress('Embedding model laden (all-MiniLM-L6-v2)...', 5);
-    State.tjsEmbedPipeline = await pipeline(
-        'feature-extraction',
-        'Xenova/all-MiniLM-L6-v2',
-        {
-            device: embedDevice,
-            dtype: 'fp32',
-            progress_callback: (x) => {
-                if (x.status === 'progress') {
-                    const pct = 5 + (x.progress || 0) * 0.30;
-                    onProgress(`Embedding: ${x.file || ''} ${Math.round(x.progress || 0)}%`, pct);
-                }
+    // ── STEP 1: Nomic embedding model ──────────────────────────────────────────
+    onProgress('Tokenizer & Model laden (nomic-embed-text-v1.5 q4)...', 5);
+    State.tjsTokenizer = await AutoTokenizer.from_pretrained('nomic-ai/nomic-embed-text-v1.5');
+    State.tjsEmbedModel = await AutoModel.from_pretrained('nomic-ai/nomic-embed-text-v1.5', {
+        device: embedDevice,
+        dtype: 'q4',
+        progress_callback: (x) => {
+            if (x.status === 'progress') {
+                const pct = 5 + (x.progress || 0) * 0.15;
+                onProgress(`Embedding: ${x.file || ''} ${Math.round(x.progress || 0)}%`, pct);
             }
         }
-    );
+    });
 
-    onProgress('LLM laden: granite-4.0-micro...', 35);
-const llmModelId = 'onnx-community/granite-4.0-micro-ONNX-web';
+    // ── STEP 2: BGE Reranker via AutoModelForSequenceClassification ───────────
+    // WHY not pipeline('text-classification'):
+    //   It ignores text_pair, treats input as a single string, returns sigmoid-squashed
+    //   label scores always ~1.0 regardless of query. Cross-encoders need batched
+    //   (query, passage) pairs → raw logits → sigmoid applied by us.
+    // WHY Xenova/bge-reranker-base and NOT bge-reranker-v2-m3 browser exports:
+    //   All v2-m3 ONNX exports use external data format (model.onnx stub + 2.2 GB sidecar).
+    //   ONNX Runtime WebGPU/WASM needs Module.MountedFiles for that — not available for
+    //   remote HF CDN fetches → "Deserialize tensor failed. MountedFiles not available".
+    //   Xenova/bge-reranker-base = single self-contained model.onnx (~260 MB). Works.
+    //   XLM-RoBERTa backbone is 100-language and handles Dutch fine.
+    onProgress('Reranker laden (bge-reranker-base, browser-compatible)...', 25);
+    const rerankModelId = 'Xenova/bge-reranker-base';
+    State.tjsRerankTokenizer = await AutoTokenizer.from_pretrained(rerankModelId, {
+        progress_callback: (x) => {
+            if (x.status === 'progress') {
+                onProgress(`Reranker tokenizer: ${x.file || ''} ${Math.round(x.progress || 0)}%`, 26);
+            }
+        }
+    });
+    State.tjsRerankModel = await AutoModelForSequenceClassification.from_pretrained(rerankModelId, {
+        device: embedDevice,
+        dtype: 'q8',
+        progress_callback: (x) => {
+            if (x.status === 'progress') {
+                const pct = 27 + (x.progress || 0) * 0.18;
+                onProgress(`Reranker model: ${x.file || ''} ${Math.round(x.progress || 0)}%`, pct);
+            }
+        }
+    });
+
+    // ── STEP 3: Granite 4.0 Micro LLM ─────────────────────────────────────────
+    onProgress('LLM laden: granite-4.0-micro...', 50);
+    const llmModelId = 'onnx-community/granite-4.0-micro-ONNX-web';
     State.tjsLLMPipeline = await pipeline(
         'text-generation',
         llmModelId,
         {
             device: (typeof navigator.gpu !== 'undefined') ? 'webgpu' : 'wasm',
-            // dtype omitted — the web export has optimal quantization baked in
             progress_callback: (x) => {
                 if (x.status === 'progress') {
-                    const pct = 35 + (x.progress || 0) * 0.65;
+                    const pct = 50 + (x.progress || 0) * 0.50;
                     onProgress(`LLM: ${Math.round(x.progress || 0)}%`, pct);
                 }
             }
@@ -331,51 +381,49 @@ const llmModelId = 'onnx-community/granite-4.0-micro-ONNX-web';
     onProgress('Klaar!', 100);
 }
 
-async function embedText_TJS(text) {
-    const output = await State.tjsEmbedPipeline(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data);
-}
+async function embedText_TJS(text, role = 'document') {
+    const prefix = role === 'query' ? 'search_query: ' : 'search_document: ';
+    const fullText = prefix + text;
 
-async function inferWithTJS(messages) {
-    const result = await State.tjsLLMPipeline(messages, {
-        max_new_tokens: 768,
-        temperature: 0.4,
-        do_sample: false
+    const text_inputs = State.tjsTokenizer(fullText, {
+        padding: true,
+        truncation: true
     });
 
-    const raw = result[0].generated_text;
-    console.log("TJS full output:", JSON.stringify(raw, null, 2));
+    const { last_hidden_state } = await State.tjsEmbedModel(text_inputs);
 
-    if (Array.isArray(raw)) {
-        // Log each message role+content length so we can see what's there
-        raw.forEach((m, i) => {
-            const contentPreview = typeof m.content === 'string'
-                ? m.content.slice(0, 120)
-                : JSON.stringify(m.content).slice(0, 120);
-            console.log(`  [${i}] role="${m.role}" content(${(m.content||'').length} chars): ${contentPreview}`);
-        });
+    let textEmbeddings = State.tjsMath.mean_pooling(
+        last_hidden_state, 
+        text_inputs.attention_mask
+    );
+    textEmbeddings = State.tjsMath.layer_norm(textEmbeddings, [textEmbeddings.dims[1]]);
+    textEmbeddings = textEmbeddings.normalize(2, -1);
 
-        // Find last assistant message
-        for (let i = raw.length - 1; i >= 0; i--) {
-            if (raw[i].role === 'assistant') {
-                const content = raw[i].content;
-                // content might be a string or an array of content blocks
-                if (typeof content === 'string') return content;
-                if (Array.isArray(content)) return content.map(c => c.text || c.content || '').join('');
-                return String(content);
-            }
-        }
-        // No assistant role found — just take the last element
-        console.warn("No assistant role found, taking last element:", raw[raw.length-1]);
-        const last = raw[raw.length - 1];
-        return typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
-    }
-
-    if (typeof raw === 'string') return raw;
-    return JSON.stringify(raw);
+    return textEmbeddings.tolist()[0];
 }
 
-// TJS: model download knop
+async function inferWithTJS(messages, onToken) {
+    const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer, {
+        skip_prompt: true,
+        skip_special_tokens: true,
+        callback_function: (text) => { if (onToken) onToken(text); }
+    });
+
+    // 2026 SOTA: Repetition penalty prevents 3B models from entering endless loops
+    const result = await State.tjsLLMPipeline(messages, {
+        max_new_tokens: 1024,
+        do_sample: false,
+        repetition_penalty: 1.15, 
+        streamer
+    });
+
+    const generated = result[0].generated_text;
+    if (Array.isArray(generated)) {
+        return generated.at(-1).content ?? '';
+    }
+    return typeof generated === 'string' ? generated : JSON.stringify(generated);
+}
+
 document.getElementById('btn-tjs-load').addEventListener('click', async () => {
     const btn = document.getElementById('btn-tjs-load');
     btn.disabled = true;
@@ -398,7 +446,6 @@ document.getElementById('btn-tjs-load').addEventListener('click', async () => {
     }
 });
 
-// TJS: start knop
 document.getElementById('btn-tjs-start').addEventListener('click', async () => {
     const files = document.getElementById('cfg-files-tjs').files;
     if (files.length === 0) return alert("Selecteer minstens één markdown bestand.");
@@ -407,6 +454,73 @@ document.getElementById('btn-tjs-start').addEventListener('click', async () => {
     document.getElementById('tjs-model-progress').style.display = 'none';
     await initAndStart(files);
 });
+
+function chunkMarkdown(text, filename) {
+    if (typeof marked === 'undefined' || !marked.lexer) {
+        return text.split(/\n\s*\n/).filter(c => c.trim().length > 20).map((t, i) => ({
+            id: `${filename}_${i}`,
+            text: t.trim()
+        }));
+    }
+
+    const tokens = marked.lexer(text);
+    const chunks = [];
+    let chunkIdx = 0;
+    const headingStack = ['', '', ''];
+    let currentBodyTokens = [];  
+    const MAX_CHUNK_CHARS = 1400;
+
+    function flushChunk() {
+        const bodyText = currentBodyTokens.map(t => t.raw || '').join('').trim();
+        if (bodyText.length < 20) {
+            currentBodyTokens = [];
+            return;
+        }
+
+        const breadcrumb = headingStack
+            .map((h, i) => h.length > 0 ? `${'#'.repeat(i + 1)} ${h}` : null)
+            .filter(line => line !== null)
+            .join('\n');
+
+        const fullText = breadcrumb.length > 0
+            ? `${breadcrumb}\n\n${bodyText}`
+            : bodyText;
+
+        chunks.push({
+            id: `${filename}_${chunkIdx++}`,
+            text: fullText
+        });
+
+        currentBodyTokens = [];
+    }
+
+    for (const token of tokens) {
+        if (token.type === 'heading') {
+            const depth = token.depth;
+            if (depth <= 3) {
+                if (currentBodyTokens.length > 0) flushChunk();
+                headingStack[depth - 1] = token.text || '';
+                for (let d = depth; d < 3; d++) headingStack[d] = '';
+            } else {
+                currentBodyTokens.push(token);
+            }
+        } else {
+            currentBodyTokens.push(token);
+            const accumulatedLength = currentBodyTokens
+                .map(t => (t.raw || '').length)
+                .reduce((a, b) => a + b, 0);
+
+            if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
+        }
+    }
+
+    flushChunk();
+    if (chunks.length === 0 && text.trim().length > 0) {
+        chunks.push({ id: `${filename}_0`, text: text.trim() });
+    }
+
+    return chunks;
+}
 
 function renderDocumentPane(filename, text) {
     const container = document.getElementById('docs-container');
@@ -422,14 +536,13 @@ function renderDocumentPane(filename, text) {
     content.className = 'doc-content';
     content.id = `content-${filename}`;
     
-    // Split op de exact zelfde manier als je vector engine
-    const rawChunks = text.split(/\n\s*\n/).filter(c => c.trim().length > 20);
+    const structuredChunks = chunkMarkdown(text, filename);
     
-    rawChunks.forEach((chunk, i) => {
+    structuredChunks.forEach((chunk) => {
         const chunkDiv = document.createElement('div');
-        chunkDiv.id = `${filename}_${i}`; // DIT IS JE ANCHOR
+        chunkDiv.id = chunk.id;
         chunkDiv.className = 'chunk-block';
-        chunkDiv.innerHTML = marked.parse(chunk);
+        chunkDiv.innerHTML = marked.parse(chunk.text);
         content.appendChild(chunkDiv);
     });
     
@@ -458,10 +571,20 @@ function addMessage(role, text, citations = []) {
             if(!cit.document) return;
             const c = document.createElement('span');
             c.className = 'citation-chip';
-            c.textContent = `📍 ${cit.document}`;
-            c.title = cit.quote ? `Quote: "${cit.quote}"` : 'Bronbestand';
-            // Click to manually trigger the highlight
-            c.onclick = () => highlightAndScroll(cit.document, cit.chunkId);
+            const chunkSuffix = cit.chunkId ? ` #${cit.chunkId.split('_').at(-1)}` : '';
+            c.textContent = `📍 ${cit.document}${chunkSuffix}`;
+            c.title = cit.chunkId || 'Bronbestand';
+            c.onclick = () => {
+                if (c.classList.contains('chip-active')) {
+                    c.classList.remove('chip-active');
+                    clearHighlights();
+                } else {
+                    chipContainer.querySelectorAll('.chip-active').forEach(el => el.classList.remove('chip-active'));
+                    c.classList.add('chip-active');
+                    clearHighlights();
+                    if (cit.chunkId) highlightAndScroll(cit.document, cit.chunkId);
+                }
+            };
             chipContainer.appendChild(c);
         });
     }
@@ -470,38 +593,61 @@ function addMessage(role, text, citations = []) {
     history.scrollTop = history.scrollHeight;
 }
 
-// ── VECTOR & RAG ENGINE ──
 async function buildEmbeddings(filename, text) {
-    const rawChunks = text.split(/\n\s*\n/).filter(c => c.trim().length > 20);
+    const structuredChunks = chunkMarkdown(text, filename);
     const pText = document.getElementById('progress-text');
     const pFill = document.getElementById('progress-fill');
     
-    for(let i = 0; i < rawChunks.length; i++) {
-        pText.textContent = `Vectoriseren... (${filename} — chunk ${i+1}/${rawChunks.length})`;
-        pFill.style.width = `${Math.round((i / rawChunks.length) * 100)}%`;
+    for(let i = 0; i < structuredChunks.length; i++) {
+        pText.textContent = `Vectoriseren... (${filename} — chunk ${i+1}/${structuredChunks.length})`;
+        pFill.style.width = `${Math.round((i / structuredChunks.length) * 100)}%`;
         
         try {
             let vector;
+            const textToEmbed = structuredChunks[i].text;
+
             if (State.backend === 'transformers') {
-                vector = await embedText_TJS(rawChunks[i].trim());
+                vector = await embedText_TJS(textToEmbed, 'document');
             } else {
+                const isNomic = State.embedModel.toLowerCase().includes('nomic');
+                const inputText = isNomic ? `search_document: ${textToEmbed}` : textToEmbed;
                 const res = await fetch(`${State.url}/v1/embeddings`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: State.embedModel, input: rawChunks[i].trim() })
+                    body: JSON.stringify({ model: State.embedModel, input: inputText })
                 });
                 const data = await res.json();
                 vector = data.data[0].embedding;
             }
             State.chunks.push({
-                id: `${filename}_${i}`,
+                id: structuredChunks[i].id,
                 docName: filename,
-                text: rawChunks[i].trim(),
+                text: structuredChunks[i].text,
                 vector
             });
         } catch (e) {
             console.error("Embedding fail", e);
         }
     }
+}
+
+function headingBoostScore(chunk, queryTerms) {
+    const h1h2Lines = chunk.text
+        .split('\n')
+        .filter(l => /^#{1,2}\s/.test(l.trimStart()))
+        .join(' ')
+        .toLowerCase();
+
+    if (h1h2Lines.length === 0) return 1.0;
+
+    let matchCount = 0;
+    for (const term of queryTerms) {
+        if (term.length >= 2 && h1h2Lines.includes(term)) matchCount++;
+    }
+    return Math.min(1.8, 1.0 + matchCount * 0.20);
+}
+
+function tokenizeQuery(query) {
+    return query.toLowerCase().match(/[\wÀ-ÿ]{2,}/g) || [];
 }
 
 function cosineSimilarity(vecA, vecB) {
@@ -514,30 +660,77 @@ function cosineSimilarity(vecA, vecB) {
     return dot / (Math.sqrt(nA) * Math.sqrt(nB));
 }
 
-async function searchVectors(query, topK = 3) {
-    let qVec;
-    if (State.backend === 'transformers') {
-        qVec = await embedText_TJS(query);
-    } else {
-        const res = await fetch(`${State.url}/v1/embeddings`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: State.embedModel, input: query })
-        });
-        const data = await res.json();
-        qVec = data.data[0].embedding;
-    }
-    
-    const scored = State.chunks.map(chunk => ({
-        ...chunk,
-        score: cosineSimilarity(qVec, chunk.vector)
-    }));
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK);
+// Hulpfunctie voor keyword matching (BM25-light)
+function calculateKeywordScore(text, queryTerms) {
+    const textLower = text.toLowerCase();
+    let matches = 0;
+    queryTerms.forEach(term => {
+        if (textLower.includes(term)) matches++;
+    });
+    return queryTerms.length > 0 ? (matches / queryTerms.length) : 0;
 }
 
-// ── HIGHLIGHTING MACHINERY ──
+// Helper voor de hybride ranking (trefwoorden)
+function calculateKeywordScore(text, queryTerms) {
+    if (queryTerms.length === 0) return 0;
+    const textLower = text.toLowerCase();
+    let matches = 0;
+    queryTerms.forEach(term => {
+        if (textLower.includes(term)) matches++;
+    });
+    return matches / queryTerms.length;
+}
+
+async function searchVectors(query, finalTopK = 5, onPhase = null) {
+    const queryTerms = tokenizeQuery(query);
+    if (onPhase) onPhase('embed');
+    const qVec = await (State.backend === 'transformers' ? embedText_TJS(query, 'query') : await getEmbeddingsFromAPI(query));
+
+    // 1. Hybride Scoring
+    if (onPhase) onPhase('hybrid');
+    const scored = State.chunks.map(chunk => {
+        const semanticScore = cosineSimilarity(qVec, chunk.vector);
+        const keywordScore = calculateKeywordScore(chunk.text, queryTerms);
+        return { ...chunk, score: (semanticScore * 0.7) + (keywordScore * 0.3) };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    let candidates = scored.slice(0, 12);
+
+    if (State.backend === 'transformers' && State.tjsRerankModel && State.tjsRerankTokenizer) {
+        try {
+            if (onPhase) onPhase('rerank');
+            const sigmoid = x => 1 / (1 + Math.exp(-x));
+
+            const queries = candidates.map(() => query);
+            const passages = candidates.map(c => c.text);
+
+            const inputs = State.tjsRerankTokenizer(queries, {
+                text_pair: passages,
+                padding: true,
+                truncation: true,
+                max_length: 512
+            });
+
+            const { logits } = await State.tjsRerankModel(inputs);
+            // logits.data is a flat Float32Array: one logit per candidate
+            const rawScores = Array.from(logits.data);
+
+            candidates = candidates.map((chunk, i) => ({
+                ...chunk,
+                score: sigmoid(rawScores[i])
+            }));
+
+            candidates.sort((a, b) => b.score - a.score);
+            console.log("Reranked Top 3 scores:", candidates.slice(0, 3).map(c => c.score.toFixed(4)));
+        } catch(e) {
+            console.error("Reranker faalde:", e);
+        }
+    }
+    return candidates.slice(0, finalTopK);
+}
+
 function clearHighlights() {
-    // Clear old mark-based highlights
     document.querySelectorAll('mark.ai-hl').forEach(el => {
         const parent = el.parentNode;
         if(parent) {
@@ -545,27 +738,15 @@ function clearHighlights() {
             parent.normalize();
         }
     });
-    // Clear background-color highlights on chunk blocks
     document.querySelectorAll('.chunk-block').forEach(el => {
         el.style.backgroundColor = '';
     });
 }
 
-
-
 function highlightAndScroll(docName, chunkId) {
-    // NOTE: clearHighlights() is NOT called here — caller does it once before the loop
-    
     const targetEl = document.getElementById(chunkId);
-    if (!targetEl) {
-        console.warn("Chunk niet gevonden:", chunkId);
-        return;
-    }
-    
-    // Highlight het chunk-blok
+    if (!targetEl) return;
     targetEl.style.backgroundColor = "var(--hl)";
-    
-    // Scroll binnen de doc-content container (nested scroll — scrollIntoView is onbetrouwbaar hier)
     const docContent = targetEl.closest('.doc-content');
     if (docContent) {
         const elTop = targetEl.getBoundingClientRect().top;
@@ -575,106 +756,36 @@ function highlightAndScroll(docName, chunkId) {
     }
 }
 
-/*
-function highlightAndScroll(docName, quote) {
-    clearHighlights();
-    
-    // Find the correct document pane (fuzzy match just in case)
-    let contentDiv = document.getElementById(`content-${docName}`);
-    if(!contentDiv) {
-        const allContents = document.querySelectorAll('.doc-content');
-        for(let c of allContents) {
-            if(c.id.toLowerCase().includes(docName.toLowerCase()) || docName.toLowerCase().includes(c.id.replace('content-', '').toLowerCase())) {
-                contentDiv = c; break;
-            }
-        }
-    }
-    
-    if(!contentDiv) return;
-
-    let textFound = false;
-
-    // Try finding exact quote if provided
-    if(quote && quote.length >= 4) {
-        const walker = document.createTreeWalker(contentDiv, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        const cleanQuote = quote.replace(/\s+/g, ' ').trim().toLowerCase();
-
-        while(node = walker.nextNode()) {
-            const cleanNode = node.nodeValue.replace(/\s+/g, ' ').toLowerCase();
-            const idx = cleanNode.indexOf(cleanQuote);
-            
-            if(idx !== -1) {
-                const parent = node.parentNode;
-                const regex = new RegExp(`(${quote.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
-                parent.innerHTML = parent.innerHTML.replace(regex, '<mark class="ai-hl">$1</mark>');
-                
-                const markEl = parent.querySelector('mark.ai-hl');
-                if(markEl) {
-                    markEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-                textFound = true;
-                break; // Highlight first match only
-            }
-        }
-    }
-
-    // Fallback: if quote wasn't found (e.g. LLM translated it anyway), highlight the frame visually
-    if(!textFound) {
-        const frame = contentDiv.parentElement;
-        frame.style.boxShadow = "0 0 0 3px var(--hl)";
-        setTimeout(() => { frame.style.boxShadow = "0 2px 5px rgba(0,0,0,0.02)"; }, 2000);
-        frame.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-}
-
-*/
-// ── ROBUST JSON EXTRACTOR ──
 function extractJSON(rawText) {
     let text = rawText.trim()
         .replace(/^`{3}(?:json)?\s*/i, '')
         .replace(/\s*`{3}\s*$/, '');
-
-    // Attempt 1: clean parse
     try { return JSON.parse(text); } catch(e) {}
 
-    // Attempt 2: extract outermost { … }
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const block = m[0];
     try { return JSON.parse(block); } catch(e) {}
 
-    // Attempt 3: model produced malformed JSON (e.g. markdown links with
-    // unescaped quotes, or unterminated strings). Extract each known field
-    // individually using positional regexes rather than full parsing.
     try {
         const obj = {};
+        const replyM = block.match(/"reply"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
+        if (replyM) obj.reply = replyM[1].replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\\n/g, '\n').replace(/\\"/g, '"');
 
-        // reply: everything between "reply": " and the next ", "state_update"
-        const replyM = block.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"state_update"/);
-        if (replyM) {
-            // Strip markdown links [text](url) → text so display is clean
-            obj.reply = replyM[1]
-                .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-                .replace(/\\n/g, '\n')
-                .replace(/\\"/g, '"');
-        }
+        const redM = block.match(/"redenering"\s*:\s*"([\s\S]*?)"\s*,/);
+        if (redM) obj.redenering = redM[1];
 
-        // state_update: the {...} block between "state_update": and "citations"
         const suM = block.match(/"state_update"\s*:\s*(\{[\s\S]*?\})\s*,\s*"citations"/);
         if (suM) { try { obj.state_update = JSON.parse(suM[1]); } catch(e2) {} }
 
-        // citations: the [...] block at the end
         const citM = block.match(/"citations"\s*:\s*(\[[\s\S]*?\])\s*\}?\s*$/);
         if (citM) { try { obj.citations = JSON.parse(citM[1]); } catch(e2) {} }
 
         if (obj.reply) return obj;
     } catch(e) {}
-
     return null;
 }
 
-// ── CHAT EXECUTION ──
 document.getElementById('send-btn').addEventListener('click', async () => {
     const inputEl = document.getElementById('chat-input');
     const text = inputEl.value.trim();
@@ -685,65 +796,119 @@ document.getElementById('send-btn').addEventListener('click', async () => {
     clearHighlights();
     document.getElementById('send-btn').disabled = true;
 
-    // 1. Vector Search
-    const relevantChunks = await searchVectors(text, 4);
+    // Show activity placeholder immediately — before any async work
+    const chatHistory = document.getElementById('chat-history');
+    const placeholder = document.createElement('div');
+    placeholder.className = 'msg bot streaming';
+    const isTJS = State.backend === 'transformers';
+    placeholder.textContent = '🔍 Vraag inbedden...';
+    chatHistory.appendChild(placeholder);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+
+    // Phase labels shown as retrieval pipeline progresses
+    let rerankStart = null;
+    let rerankTimer = null;
+    const onPhase = (phase) => {
+        if (phase === 'embed') {
+            placeholder.textContent = '🔍 Vraag inbedden...';
+        } else if (phase === 'hybrid') {
+            placeholder.textContent = '🔍 Hybride retrieval (vector + keyword)...';
+        } else if (phase === 'rerank') {
+            placeholder.textContent = '⚖️ Reranking (cross-encoder)...';
+            rerankStart = Date.now();
+            rerankTimer = setInterval(() => {
+                const elapsed = ((Date.now() - rerankStart) / 1000).toFixed(1);
+                placeholder.textContent = `⚖️ Reranking... ${elapsed}s`;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }, 400);
+        }
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    };
+
+    const relevantChunks = await searchVectors(text, 5, onPhase);
+    if (rerankTimer) clearInterval(rerankTimer);
+
+    console.log('[RAG] Final Top 5 na Reranking:', relevantChunks.map(c => ({
+        id: c.id,
+        score: c.score?.toFixed(3),
+        preview: c.text.split('\n').slice(0, 3).join(' | ')
+    })));
+
+    placeholder.textContent = '🧠 Context samenstellen en redeneren...';
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+
     let contextString = "CONTEXT:\n";
     relevantChunks.forEach(c => {
         contextString += `[Doc: ${c.docName}, ChunkId: ${c.id}]\n${c.text}\n\n`;
     });
 
-    // 2. Build Prompt
-    const localHistory = [...State.chatHistory];
-    localHistory.push({ role: 'user', content: `${contextString}\nVraag: ${text}` });
+    const localHistory = [
+        ...State.chatHistory,
+        { role: 'user', content: `${contextString}\nVraag: ${text}` }
+    ];
 
-    // 3. Inference
     try {
         let rawContent;
-
-        if (State.backend === 'transformers') {
-            rawContent = await inferWithTJS(localHistory);
+        if (isTJS) {
+            let tokenCount = 0;
+            rawContent = await inferWithTJS(localHistory, () => {
+                tokenCount++;
+                placeholder.textContent = `⏳ Genereert... (${tokenCount} tokens)`;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            });
+            placeholder.remove();
         } else {
+            placeholder.textContent = '⏳ LM Studio genereert antwoord...';
             const res = await fetch(`${State.url}/v1/chat/completions`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: State.chatModel,
-                    messages: localHistory,
-                    temperature: 0.1
+                body: JSON.stringify({ 
+                    model: State.chatModel, 
+                    messages: localHistory, 
+                    temperature: 0.1,
+                    repetition_penalty: 1.15
                 })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error?.message || `API foutcode: ${res.status}`);
             rawContent = data.choices[0].message.content;
+            placeholder.remove();
         }
         
-        // Save to real history without the heavy context blocks
         State.chatHistory.push({ role: 'user', content: text });
         State.chatHistory.push({ role: 'assistant', content: rawContent });
 
-        // Parse JSON Output
+        const MAX_TURNS = 8;
+        const systemMsg = State.chatHistory[0];
+        const qaPart = State.chatHistory.slice(1);
+        if (qaPart.length > MAX_TURNS * 2) {
+            State.chatHistory = [systemMsg, ...qaPart.slice(-(MAX_TURNS * 2))];
+        }
+
         const parsed = extractJSON(rawContent);
         
         if (parsed) {
             addMessage('bot', parsed.reply || "Geen tekst antwoord gevonden.", parsed.citations || []);
-            updateStatePane(parsed.state_update);
             
-// Execute Highlights — clear eenmalig, dan alle citaten highlighten
-if(parsed.citations && Array.isArray(parsed.citations)) {
-    clearHighlights();
-    parsed.citations.forEach(c => {
-        if(c.chunkId) highlightAndScroll(c.document, c.chunkId);
-    });
-}
+            const viewState = { ...parsed.state_update };
+            if (parsed.redenering) viewState.SLM_Redenering = parsed.redenering;
+            updateStatePane(viewState);
+            
+            if(parsed.citations && Array.isArray(parsed.citations)) {
+                clearHighlights();
+                parsed.citations.forEach(c => {
+                    if(c.chunkId) highlightAndScroll(c.document, c.chunkId);
+                });
+            }
         } else {
-            addMessage('bot', `Systeem: Het model retourneerde geen geldige JSON structuur.\n\nRuwe output:\n${rawContent || '(leeg — zie console)'}`);
-            console.warn("Raw model output:", rawContent);
+            placeholder.remove();
+            addMessage('bot', `Systeem: Het model retourneerde geen geldige JSON structuur.\n\nRuwe output:\n${rawContent || '(leeg)'}`);
         }
 
     } catch (e) {
+        placeholder.remove();
         addMessage('bot', `Systeemfout: ${e.message}`);
         console.error(e);
     }
-    
     document.getElementById('send-btn').disabled = false;
 });
 
@@ -752,12 +917,10 @@ document.getElementById('chat-input').addEventListener('keydown', e => {
 });
 
 async function nukeTjsCache() {
-    // TJS stores models in the browser's Cache Storage and IndexedDB
     if ('caches' in window) {
         const keys = await caches.keys();
         await Promise.all(keys.map(k => caches.delete(k)));
     }
-    // TJS also uses localStorage for bookkeeping
     localStorage.clear();
     console.log('Cache cleared. Reload the page to re-download from CDN.');
 }
