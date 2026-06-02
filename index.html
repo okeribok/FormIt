@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fietsbel CE v6 - Deterministic RAG (2026 SOTA)</title>
+<title>Fietsbel CE b16 - Deterministic RAG</title>
 <!-- Local offline markdown parser -->
 <script src="marked.min.js"></script>
 <!-- transformers.min.js is loaded dynamically on demand — place next to index.html -->
@@ -78,6 +78,27 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 .citation-chip:hover { background: #d0d0d0; }
 .citation-chip.chip-active { background: var(--hl); color: #222; box-shadow: 0 0 0 1px #e6c84c; }
 
+/* Markdown rendering in bot bubbles */
+.msg.bot .md-body { line-height: 1.65; }
+.msg.bot .md-body h1,.msg.bot .md-body h2,.msg.bot .md-body h3 { font-weight:700; margin:0.9rem 0 0.35rem; }
+.msg.bot .md-body h1 { font-size:1.15rem; }
+.msg.bot .md-body h2 { font-size:1.05rem; }
+.msg.bot .md-body h3 { font-size:0.97rem; color:#444; }
+.msg.bot .md-body p { margin-bottom:0.55rem; }
+.msg.bot .md-body ul,.msg.bot .md-body ol { padding-left:1.4em; margin-bottom:0.55rem; }
+.msg.bot .md-body li { margin-bottom:0.2rem; }
+.msg.bot .md-body strong { font-weight:700; }
+.msg.bot .md-body em { font-style:italic; color:#555; }
+.msg.bot .md-body code { font-family:var(--font-mono); font-size:0.85em; background:#e8e8e8; padding:0.1em 0.35em; border-radius:3px; }
+.msg.bot .md-body blockquote { border-left:3px solid var(--primary); margin:0.4rem 0; padding:0.3rem 0.8rem; color:#555; background:#f0f4fa; border-radius:0 4px 4px 0; }
+/* Streaming cursor blink on the md-body div */
+.md-body.streaming-cursor::after { content:'▋'; display:inline; animation:blink 0.8s step-end infinite; color:var(--primary); margin-left:1px; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+/* Pass 3 conversational block */
+.pass3-block { background: #f0f4fa; border: 1px solid #c8d8f0; margin-top: -0.5rem; border-radius: 0 0 6px 6px; border-top: 2px dashed #c8d8f0; }
+.pass3-block .md-body blockquote { cursor: pointer; background: #e4ecf8; border-left-color: #4a90d9; }
+.pass3-block .md-body blockquote:hover { background: #d4e4f8; }
+
 #input-area { padding: 1rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem; background: #fafafa; flex-shrink: 0; }
 #chat-input { flex: 1; padding: 0.6rem; border: 1px solid var(--border); border-radius: 4px; font-family: var(--font-sans); font-size: 0.95rem; resize: none; height: 50px; }
 #send-btn { width: auto; margin-top: 0; padding: 0 1.5rem; }
@@ -88,14 +109,14 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 <!-- SETUP MODAL -->
 <div id="overlay">
   <div class="modal-box" id="box-choice">
-    <h2>Fietsbel CE v6 — Kies backend</h2>
+    <h2>Fietsbel CE b16 — Kies backend</h2>
     <p class="sub">LM Studio vereist een lokale server. Browser AI draait volledig in de browser via Transformers.js v4.2+.</p>
     <button id="btn-choose-lms" style="margin-bottom:0.5rem;">🖥 LM Studio &nbsp;— lokaal, snel</button>
     <button id="btn-choose-tjs">🌐 Browser AI &nbsp;— geen server nodig</button>
   </div>
 
   <div class="modal-box" id="box-lmstudio" style="display:none;">
-    <h2>Fietsbel CE v6 — LM Studio</h2>
+    <h2>Fietsbel CE b16 — LM Studio</h2>
     <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld. <em>Reranking is niet beschikbaar via LM Studio (geen /v1/rerank endpoint) — retrieval werkt hier via hybride vector+keyword. Gebruik Browser AI voor volledige pipeline inclusief reranker.</em></p>
     <div class="field">
       <label>API Endpoint (LM Studio)</label>
@@ -114,24 +135,26 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
         <select id="cfg-embed"></select>
       </div>
       <div class="field">
-        <label>Selecteer Markdown Documenten</label>
-        <input type="file" id="cfg-files" multiple accept=".md">
+        <label for="cfg-files">Selecteer Markdown Documenten</label>
+        <button type="button" style="all:unset; cursor:pointer; font-size:0.9rem; margin-left:0.2rem;" popovertarget="md-hint">ⓘ</button>
+      <input type="file" id="cfg-files" multiple accept=".md">
       </div>
       <button id="btn-start">Start Platform</button>
     </div>
   </div>
 
   <div class="modal-box" id="box-tjs" style="display:none;">
-    <h2>Fietsbel CE v6 — Browser AI</h2>
+    <h2>Fietsbel CE b16 — Browser AI</h2>
     <p class="sub">Modellen worden gedownload van HuggingFace CDN. Bevat Nomic 1.5 (q4), BGE Reranker base (Xenova, browser-compatibel) en Granite 4.0 Micro.</p>
     <button id="btn-tjs-load">⬇ Download &amp; Laad Modellen</button>
     <div id="tjs-model-progress" style="display:none; margin-top:1rem;">
       <div id="tjs-prog-text" style="font-size:0.85rem; color:var(--muted); margin-bottom:0.3rem;">Laden...</div>
-      <div id="progress-bar"><div id="tjs-prog-fill" style="width:0%"></div></div>
+      <div id="progress-bar"><div id="tjs-prog-fill" style="width:0%; height:100%; background:var(--primary); transition:width 0.3s;"></div></div>
     </div>
     <div id="tjs-file-section" style="display:none; margin-top:1.5rem;">
       <div class="field">
         <label>Selecteer Markdown Documenten</label>
+        <button type="button" style="all:unset; cursor:pointer; font-size:0.9rem; margin-left:0.2rem;" popovertarget="md-hint">ⓘ</button>
         <input type="file" id="cfg-files-tjs" multiple accept=".md">
       </div>
       <button id="btn-tjs-start">Start Platform</button>
@@ -160,10 +183,11 @@ mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-s
 }</div>
     </div>
     <div id="chat-pane">
-      <div class="pane-header">Fietsbel CE v6 — Multidisciplinair Overleg</div>
+      <div class="pane-header">Fietsbel CE b16 — Multidisciplinair Overleg</div>
       <div id="chat-history"></div>
       <div id="input-area">
         <textarea id="chat-input" placeholder="Stel een vraag over de documenten..."></textarea>
+        <button id="new-search-btn" title="Nieuwe zoekopdracht — zoekt opnieuw in plaats van vorige chunks hergebruiken" style="width:auto; margin-top:0; padding:0 0.8rem; background:#888; font-size:1.1rem; flex-shrink:0;">🔍</button>
         <button id="send-btn">Stuur</button>
       </div>
     </div>
@@ -187,7 +211,9 @@ const State = {
     TextStreamer: null,
     chunks: [],
     chatHistory: [],
-    jsonState: { intent: "Onbekend", facts_gathered: [] }
+    jsonState: { intent: "Onbekend", facts_gathered: [] },
+    lastChunks: null,       // cached retrieval result from previous turn
+    forceNewSearch: false   // set true when user clicks 🔍 button
 };
 
 document.getElementById('btn-choose-lms').addEventListener('click', () => {
@@ -260,35 +286,14 @@ async function initAndStart(files) {
 
 State.chatHistory.push({
     role: "system",
-    content: `Role: Strict Deterministic RAG Analyst.
-Language Rule: Respond in the SAME language as the User's Question.
-Constraint: Use ONLY provided context. If info is missing, state "Insufficient information found."
+    content: `You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.
 
-Input Data:
-Documents: ${fileListStr}
-Context Blocks: [Doc: <name>, ChunkId: <name>_<N>]
-(Use the exact ChunkId from the header, e.g., "${exampleChunkId}")
+Context format: [Doc: <name>, ChunkId: <name>_<N>]
 
-Reasoning Protocol (Internal Step-by-Step):
-1. Analyze User Query to describe what a suitable answer would look like
-2. Iterate through Context Blocks (Highest relevance to lowest):
-   - Extract relevant facts.
-   - Update current hypothesis/answer.
-   - Falsify previous assumptions if new block contradicts.
-3. Final Decision:
-   - If confidence is HIGH: Synthesize actionable "Next Step".
-   - If confidence is LOW: State "Insufficient information found."
+Output valid JSON only. No markdown, no prose, no explanations. Start with { and end with }.
+{"decision":"<one short phrase>","state_update":{"intent":"<what user wants THIS turn>","user_facts":["<role or fact stated by user>"],"facts_gathered":["<fact from context>"]},"citations":[{"document":"${exampleFile}","chunkId":"${exampleChunkId}"}]}
 
-Output Format (STRICT JSON ONLY, no markdown/backticks):
-{
-  "reply": "<Final answer in User's Language. Actionable or 'Insufficient info'>",
-  "state_update": { "intent": "<User intent>", "facts_gathered": ["<fact 1>", "<fact 2>"] },
-  "citations": [
-    { "document": "${exampleFile}", "chunkId": "${exampleChunkId}" }
-  ]
-}
-
-Note: Copy ChunkId exactly. Do not invent IDs. Do not add extra text.`
+Rules: no reply field. user_facts = from the question itself. facts_gathered = from context only. Copy chunkId exactly.`
 });
    
     document.getElementById('overlay').style.display = 'none';
@@ -387,7 +392,8 @@ async function embedText_TJS(text, role = 'document') {
 
     const text_inputs = State.tjsTokenizer(fullText, {
         padding: true,
-        truncation: true
+        truncation: true,
+        max_length: 512
     });
 
     const { last_hidden_state } = await State.tjsEmbedModel(text_inputs);
@@ -402,25 +408,33 @@ async function embedText_TJS(text, role = 'document') {
     return textEmbeddings.tolist()[0];
 }
 
-async function inferWithTJS(messages, onToken) {
+// Pass 1: JSON decision — compact, no streaming, tight budget so model can't spiral
+async function inferJSON(messages) {
+    const result = await State.tjsLLMPipeline(messages, {
+        max_new_tokens: 400,
+        do_sample: false,
+        repetition_penalty: 1.1,
+    });
+    const generated = result[0].generated_text;
+    if (Array.isArray(generated)) return generated.at(-1).content ?? '';
+    return typeof generated === 'string' ? generated : JSON.stringify(generated);
+}
+
+// Pass 2: streamed markdown reply — tokens emitted live into a DOM element via onChunk
+async function inferStream(messages, onChunk) {
     const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer, {
         skip_prompt: true,
         skip_special_tokens: true,
-        callback_function: (text) => { if (onToken) onToken(text); }
+        callback_function: (text) => { if (onChunk) onChunk(text); }
     });
-
-    // 2026 SOTA: Repetition penalty prevents 3B models from entering endless loops
     const result = await State.tjsLLMPipeline(messages, {
         max_new_tokens: 1024,
         do_sample: false,
-        repetition_penalty: 1.15, 
+        repetition_penalty: 1.15,
         streamer
     });
-
     const generated = result[0].generated_text;
-    if (Array.isArray(generated)) {
-        return generated.at(-1).content ?? '';
-    }
+    if (Array.isArray(generated)) return generated.at(-1).content ?? '';
     return typeof generated === 'string' ? generated : JSON.stringify(generated);
 }
 
@@ -505,12 +519,27 @@ function chunkMarkdown(text, filename) {
                 currentBodyTokens.push(token);
             }
         } else {
-            currentBodyTokens.push(token);
-            const accumulatedLength = currentBodyTokens
-                .map(t => (t.raw || '').length)
-                .reduce((a, b) => a + b, 0);
+            // Safety split: any single token > 1200 chars is sliced into overlapping
+            // pieces so the embedding model never sees a giant sequence.
+            const raw = token.raw || '';
+            if (raw.length > 1200) {
+                const SLICE = 1000, OVERLAP = 200;
+                for (let s = 0; s < raw.length; s += SLICE - OVERLAP) {
+                    const sliceText = raw.slice(s, s + SLICE);
+                    currentBodyTokens.push({ ...token, raw: sliceText, text: sliceText });
+                    const accumulatedLength = currentBodyTokens
+                        .map(t => (t.raw || '').length)
+                        .reduce((a, b) => a + b, 0);
+                    if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
+                }
+            } else {
+                currentBodyTokens.push(token);
+                const accumulatedLength = currentBodyTokens
+                    .map(t => (t.raw || '').length)
+                    .reduce((a, b) => a + b, 0);
 
-            if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
+                if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
+            }
         }
     }
 
@@ -552,45 +581,156 @@ function renderDocumentPane(filename, text) {
 }
 
 function updateStatePane(newStateObj) {
-    if(newStateObj) State.jsonState = { ...State.jsonState, ...newStateObj };
+    if (newStateObj) {
+        // Intent: keep history as a stack, not just the last value
+        if (newStateObj.intent && newStateObj.intent !== State.jsonState.intent) {
+            if (!State.jsonState.intent_history) State.jsonState.intent_history = [];
+            if (State.jsonState.intent && State.jsonState.intent !== 'Onbekend') {
+                State.jsonState.intent_history.push(State.jsonState.intent);
+            }
+            State.jsonState.intent = newStateObj.intent;
+        }
+        // facts_gathered: accumulate unique facts across all turns
+        if (Array.isArray(newStateObj.facts_gathered)) {
+            if (!Array.isArray(State.jsonState.facts_gathered)) State.jsonState.facts_gathered = [];
+            newStateObj.facts_gathered.forEach(f => {
+                if (f && !State.jsonState.facts_gathered.includes(f)) {
+                    State.jsonState.facts_gathered.push(f);
+                }
+            });
+        }
+
+	// user_facts: accumulate facts stated by the user across turns
+        if (Array.isArray(newStateObj.user_facts)) {
+            if (!Array.isArray(State.jsonState.user_facts)) State.jsonState.user_facts = [];
+            newStateObj.user_facts.forEach(f => {
+                if (f && !State.jsonState.user_facts.includes(f)) {
+                    State.jsonState.user_facts.push(f);
+                }
+            });
+        }
+        // Generic decision tracking (domain-agnostic replacement for hardcoded 'spoor')
+        if (newStateObj.decision !== undefined) {
+            if (!State.jsonState.decision_history) State.jsonState.decision_history = [];
+            if (State.jsonState.current_decision) State.jsonState.decision_history.push(State.jsonState.current_decision);
+            State.jsonState.current_decision = newStateObj.decision;
+        }
+        // Any other fields: plain merge
+        const skip = new Set(['intent', 'facts_gathered', 'user_facts', 'decision']);
+        Object.keys(newStateObj).forEach(k => {
+            if (!skip.has(k)) State.jsonState[k] = newStateObj[k];
+        });
+    }
     document.getElementById('state-content').textContent = JSON.stringify(State.jsonState, null, 2);
+}
+
+// Shared chip builder — used by addMessage and by streaming bubble finalize
+function buildChipContainer(citations) {
+    const chipContainer = document.createElement('div');
+    chipContainer.style.marginTop = '8px';
+    citations.forEach(cit => {
+        if (!cit.document) return;
+        const c = document.createElement('span');
+        c.className = 'citation-chip';
+        const chunkSuffix = cit.chunkId ? ` #${cit.chunkId.split('_').at(-1)}` : '';
+        c.textContent = `📍 ${cit.document}${chunkSuffix}`;
+        c.title = cit.chunkId || 'Bronbestand';
+        c.onclick = () => {
+            if (c.classList.contains('chip-active')) {
+                c.classList.remove('chip-active');
+                clearHighlights();
+            } else {
+                chipContainer.querySelectorAll('.chip-active').forEach(el => el.classList.remove('chip-active'));
+                c.classList.add('chip-active');
+                clearHighlights();
+                if (cit.chunkId) highlightAndScroll(cit.document, cit.chunkId);
+            }
+        };
+        chipContainer.appendChild(c);
+    });
+    return chipContainer;
 }
 
 function addMessage(role, text, citations = []) {
     const history = document.getElementById('chat-history');
     const d = document.createElement('div');
     d.className = `msg ${role}`;
-    d.textContent = text;
-    
-    if(citations.length > 0) {
-        const chipContainer = document.createElement('div');
-        d.appendChild(document.createElement('br'));
-        d.appendChild(chipContainer);
 
-        citations.forEach(cit => {
-            if(!cit.document) return;
-            const c = document.createElement('span');
-            c.className = 'citation-chip';
-            const chunkSuffix = cit.chunkId ? ` #${cit.chunkId.split('_').at(-1)}` : '';
-            c.textContent = `📍 ${cit.document}${chunkSuffix}`;
-            c.title = cit.chunkId || 'Bronbestand';
-            c.onclick = () => {
-                if (c.classList.contains('chip-active')) {
-                    c.classList.remove('chip-active');
-                    clearHighlights();
-                } else {
-                    chipContainer.querySelectorAll('.chip-active').forEach(el => el.classList.remove('chip-active'));
-                    c.classList.add('chip-active');
-                    clearHighlights();
-                    if (cit.chunkId) highlightAndScroll(cit.document, cit.chunkId);
-                }
-            };
-            chipContainer.appendChild(c);
-        });
+    if (role === 'bot' && typeof marked !== 'undefined') {
+        const body = document.createElement('div');
+        body.className = 'md-body';
+        body.innerHTML = marked.parse(text);
+        d.appendChild(body);
+    } else {
+        d.textContent = text;
     }
-    
+
+    if (citations.length > 0) d.appendChild(buildChipContainer(citations));
     history.appendChild(d);
     history.scrollTop = history.scrollHeight;
+    return d;
+}
+
+// Returns a live streaming bubble handle.
+// .append(chunk) — add a text fragment, re-render markdown incrementally
+// .finalize(citations) — remove cursor, attach chips, return full accumulated text
+// parent: optional DOM element to append to (default: #chat-history)
+function createStreamingBubble(parent = null) {
+    const history = document.getElementById('chat-history');
+    const container = parent || history;
+    const d = document.createElement('div');
+    d.className = parent ? 'md-body streaming-cursor' : 'msg bot';
+    if (!parent) {
+        const body = document.createElement('div');
+        body.className = 'md-body streaming-cursor';
+        d.appendChild(body);
+        container.appendChild(d);
+        history.scrollTop = history.scrollHeight;
+        // Delegate to inner body
+        let accumulated = '';
+        const body2 = body;
+        return {
+            el: d,
+            append(chunk) {
+                accumulated += chunk;
+                body2.innerHTML = typeof marked !== 'undefined' ? marked.parse(accumulated) : accumulated.replace(/\n/g, '<br>');
+                history.scrollTop = history.scrollHeight;
+            },
+            finalize(citations = []) {
+                body2.classList.remove('streaming-cursor');
+                body2.innerHTML = typeof marked !== 'undefined' ? marked.parse(accumulated) : accumulated.replace(/\n/g, '<br>');
+                if (citations.length > 0) d.appendChild(buildChipContainer(citations));
+                history.scrollTop = history.scrollHeight;
+                return accumulated;
+            }
+        };
+    }
+    // When parent provided (thinking block): d IS the body, append directly
+    d.className = 'md-body streaming-cursor';
+    container.appendChild(d);
+    history.scrollTop = history.scrollHeight;
+
+    let accumulated = '';
+    return {
+        el: d,
+        append(chunk) {
+            accumulated += chunk;
+            d.innerHTML = typeof marked !== 'undefined'
+                ? marked.parse(accumulated)
+                : accumulated.replace(/\n/g, '<br>');
+            history.scrollTop = history.scrollHeight;
+        },
+        finalize(citations = []) {
+            d.classList.remove('streaming-cursor');
+            d.innerHTML = typeof marked !== 'undefined'
+                ? marked.parse(accumulated)
+                : accumulated.replace(/\n/g, '<br>');
+            // Citations go on the parent wrapper, not the body div
+            if (citations.length > 0) container.appendChild(buildChipContainer(citations));
+            history.scrollTop = history.scrollHeight;
+            return accumulated;
+        }
+    };
 }
 
 async function buildEmbeddings(filename, text) {
@@ -626,6 +766,11 @@ async function buildEmbeddings(filename, text) {
             });
         } catch (e) {
             console.error("Embedding fail", e);
+            alert(`Embedding failed on chunk ${i+1} of ${structuredChunks.length}.\n\n` +
+                  `This usually happens when a text chunk is too large for the browser GPU.\n` +
+                  `Try splitting the document into smaller sections, or use the LM Studio backend.\n\n` +
+                  `Error: ${e.message}`);
+            throw e;
         }
     }
 }
@@ -670,16 +815,7 @@ function calculateKeywordScore(text, queryTerms) {
     return queryTerms.length > 0 ? (matches / queryTerms.length) : 0;
 }
 
-// Helper voor de hybride ranking (trefwoorden)
-function calculateKeywordScore(text, queryTerms) {
-    if (queryTerms.length === 0) return 0;
-    const textLower = text.toLowerCase();
-    let matches = 0;
-    queryTerms.forEach(term => {
-        if (textLower.includes(term)) matches++;
-    });
-    return matches / queryTerms.length;
-}
+
 
 async function searchVectors(query, finalTopK = 5, onPhase = null) {
     const queryTerms = tokenizeQuery(query);
@@ -760,155 +896,392 @@ function extractJSON(rawText) {
     let text = rawText.trim()
         .replace(/^`{3}(?:json)?\s*/i, '')
         .replace(/\s*`{3}\s*$/, '');
-    try { return JSON.parse(text); } catch(e) {}
 
+    // Helper: normalize top-level fields into state_update
+    function normalize(obj) {
+        if (!obj) return obj;
+        if (!obj.state_update) obj.state_update = {};
+        if (obj.intent && !obj.state_update.intent) obj.state_update.intent = obj.intent;
+        if (obj.user_facts && !obj.state_update.user_facts) obj.state_update.user_facts = obj.user_facts;
+        if (obj.facts_gathered && !obj.state_update.facts_gathered) obj.state_update.facts_gathered = obj.facts_gathered;
+        return obj;
+    }
+
+    // Try direct parse
+    try { return normalize(JSON.parse(text)); } catch(e) {}
+
+    // Extract first {...} block
     const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const block = m[0];
-    try { return JSON.parse(block); } catch(e) {}
+    if (!m) {
+        // Fallback: handle "Decision: {...} Facts: [...]" prose format
+        const decisionM = text.match(/Decision:\s*(\{[\s\S]*?\})/);
+        const factsM = text.match(/Facts:\s*(\[[\s\S]*?\])/);
+        if (decisionM) {
+            try {
+                const obj = JSON.parse(decisionM[1]);
+                if (factsM) {
+                    try { obj.citations = JSON.parse(factsM[1]); } catch(e2) {}
+                }
+                return normalize(obj);
+            } catch(e) {}
+        }
+        return null;
+    }
 
+    const block = m[0];
+    try { return normalize(JSON.parse(block)); } catch(e) {}
+
+    // Manual field extraction fallback
     try {
         const obj = {};
-        const replyM = block.match(/"reply"\s*:\s*"([\s\S]*?)"\s*(?:,|\})/);
-        if (replyM) obj.reply = replyM[1].replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\\n/g, '\n').replace(/\\"/g, '"');
 
-        const redM = block.match(/"redenering"\s*:\s*"([\s\S]*?)"\s*,/);
-        if (redM) obj.redenering = redM[1];
+        const decM = block.match(/"decision"\s*:\s*"([^"]*?)"/);
+        if (decM) obj.decision = decM[1];
 
-        const suM = block.match(/"state_update"\s*:\s*(\{[\s\S]*?\})\s*,\s*"citations"/);
-        if (suM) { try { obj.state_update = JSON.parse(suM[1]); } catch(e2) {} }
+        const suM = block.match(/"state_update"\s*:\s*(\{[\s\S]*?\})\s*,\s*"/);
+        if (suM) { 
+            try { obj.state_update = JSON.parse(suM[1]); } catch(e2) {} 
+        }
 
-        const citM = block.match(/"citations"\s*:\s*(\[[\s\S]*?\])\s*\}?\s*$/);
-        if (citM) { try { obj.citations = JSON.parse(citM[1]); } catch(e2) {} }
+        const citM = block.match(/"citations"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+        if (citM) { 
+            try { obj.citations = JSON.parse(citM[1]); } catch(e2) {} 
+        }
 
-        if (obj.reply) return obj;
+        if (!obj.state_update) obj.state_update = {};
+        const intentM = block.match(/"intent"\s*:\s*"([^"]*?)"/);
+        if (intentM && !obj.state_update.intent) obj.state_update.intent = intentM[1];
+
+        const ufM = block.match(/"user_facts"\s*:\s*(\[[\s\S]*?\])/);
+        if (ufM && !obj.state_update.user_facts) {
+            try { obj.state_update.user_facts = JSON.parse(ufM[1]); } catch(e2) {}
+        }
+
+        const fgM = block.match(/"facts_gathered"\s*:\s*(\[[\s\S]*?\])/);
+        if (fgM && !obj.state_update.facts_gathered) {
+            try { obj.state_update.facts_gathered = JSON.parse(fgM[1]); } catch(e2) {}
+        }
+
+        if (obj.decision || obj.state_update?.intent || obj.citations) return normalize(obj);
     } catch(e) {}
+
     return null;
 }
+
+// Detect likely language of a short text for pass 2/3 instruction.
+// Uses common function words — sufficient for Dutch vs English at this scale.
+function detectLanguage(text) {
+    const t = text.toLowerCase();
+    const nlWords = ['de', 'het', 'een', 'is', 'van', 'in', 'dat', 'zijn', 'op', 'aan',
+                     'als', 'er', 'maar', 'wat', 'niet', 'voor', 'met', 'ook', 'dan',
+                     'ik', 'je', 'ze', 'we', 'dit', 'die', 'door', 'heeft', 'wordt'];
+    const tokens = t.split(/\s+/);
+    const nlCount = tokens.filter(w => nlWords.includes(w.replace(/[^a-z]/g, ''))).length;
+    const ratio = nlCount / Math.max(tokens.length, 1);
+    if (ratio > 0.12) return 'Dutch';
+    return 'English'; // default — model will usually match user anyway
+}
+
+document.getElementById('new-search-btn').addEventListener('click', () => {
+    State.forceNewSearch = true;
+    State.lastChunks = null;
+    const btn = document.getElementById('new-search-btn');
+    btn.style.background = 'var(--primary)';
+    setTimeout(() => { btn.style.background = '#888'; }, 800);
+});
 
 document.getElementById('send-btn').addEventListener('click', async () => {
     const inputEl = document.getElementById('chat-input');
     const text = inputEl.value.trim();
-    if(!text) return;
-    
+    if (!text) return;
+
     inputEl.value = '';
     addMessage('user', text);
     clearHighlights();
     document.getElementById('send-btn').disabled = true;
 
-    // Show activity placeholder immediately — before any async work
     const chatHistory = document.getElementById('chat-history');
+    const isTJS = State.backend === 'transformers';
+    const userLang = detectLanguage(text); // 'Dutch' or 'English'
+    const langInstruction = `Respond in ${userLang}. Match the language of the user's question exactly.`;
+
+    // ── Retrieval phase indicator ────────────────────────────────────────────
     const placeholder = document.createElement('div');
     placeholder.className = 'msg bot streaming';
-    const isTJS = State.backend === 'transformers';
     placeholder.textContent = '🔍 Vraag inbedden...';
     chatHistory.appendChild(placeholder);
     chatHistory.scrollTop = chatHistory.scrollHeight;
 
-    // Phase labels shown as retrieval pipeline progresses
-    let rerankStart = null;
     let rerankTimer = null;
     const onPhase = (phase) => {
-        if (phase === 'embed') {
-            placeholder.textContent = '🔍 Vraag inbedden...';
-        } else if (phase === 'hybrid') {
-            placeholder.textContent = '🔍 Hybride retrieval (vector + keyword)...';
-        } else if (phase === 'rerank') {
+        if (phase === 'embed')  placeholder.textContent = '🔍 Vraag inbedden...';
+        if (phase === 'hybrid') placeholder.textContent = '🔍 Hybride retrieval (vector + keyword)...';
+        if (phase === 'rerank') {
             placeholder.textContent = '⚖️ Reranking (cross-encoder)...';
-            rerankStart = Date.now();
+            const t0 = Date.now();
             rerankTimer = setInterval(() => {
-                const elapsed = ((Date.now() - rerankStart) / 1000).toFixed(1);
-                placeholder.textContent = `⚖️ Reranking... ${elapsed}s`;
+                placeholder.textContent = `⚖️ Reranking... ${((Date.now()-t0)/1000).toFixed(1)}s`;
                 chatHistory.scrollTop = chatHistory.scrollHeight;
             }, 400);
         }
         chatHistory.scrollTop = chatHistory.scrollHeight;
     };
 
-    const relevantChunks = await searchVectors(text, 5, onPhase);
-    if (rerankTimer) clearInterval(rerankTimer);
+    // Use cached chunks for follow-ups unless user explicitly requested new search.
+    // A follow-up is detected when: there are prior turns AND forceNewSearch is false.
+    const hasPriorTurns = State.chatHistory.length > 1; // system + at least one Q&A
+    const useCache = hasPriorTurns && State.lastChunks && !State.forceNewSearch;
+    State.forceNewSearch = false; // reset after each turn
 
-    console.log('[RAG] Final Top 5 na Reranking:', relevantChunks.map(c => ({
-        id: c.id,
-        score: c.score?.toFixed(3),
-        preview: c.text.split('\n').slice(0, 3).join(' | ')
+    let relevantChunks;
+    if (useCache) {
+        relevantChunks = State.lastChunks;
+        placeholder.textContent = '♻️ Vorige zoekresultaten hergebruikt';
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+        if (rerankTimer) clearInterval(rerankTimer);
+    } else {
+        relevantChunks = await searchVectors(text, 5, onPhase);
+        if (rerankTimer) clearInterval(rerankTimer);
+        State.lastChunks = relevantChunks;
+    }
+
+    console.log(`[RAG] ${useCache ? 'CACHED' : 'FRESH'} Top 5:`, relevantChunks.map(c => ({
+        id: c.id, score: c.score?.toFixed(3),
+        preview: c.text.split('\n').slice(0, 2).join(' | ')
     })));
 
-    placeholder.textContent = '🧠 Context samenstellen en redeneren...';
-    chatHistory.scrollTop = chatHistory.scrollHeight;
-
+    // ── Build context string ─────────────────────────────────────────────────
     let contextString = "CONTEXT:\n";
     relevantChunks.forEach(c => {
         contextString += `[Doc: ${c.docName}, ChunkId: ${c.id}]\n${c.text}\n\n`;
     });
 
-    const localHistory = [
-        ...State.chatHistory,
-        { role: 'user', content: `${contextString}\nVraag: ${text}` }
-    ];
-
     try {
-        let rawContent;
+        // ════════════════════════════════════════════════════════════════════
+        // PASS 1 — JSON decision (compact, no streaming)
+        // System prompt asks for: spoor/decision + citations + state_update.
+        // Token budget is tight (400) so the model must commit, not spiral.
+        // ════════════════════════════════════════════════════════════════════
+        placeholder.textContent = '🧠 Beslissing nemen (pass 1)...';
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+
+        const pass1Messages = [
+            ...State.chatHistory,
+            { role: 'user', content: `${contextString}\nQuestion: ${text}` }
+        ];
+
+        let pass1Raw, parsed;
         if (isTJS) {
-            let tokenCount = 0;
-            rawContent = await inferWithTJS(localHistory, () => {
-                tokenCount++;
-                placeholder.textContent = `⏳ Genereert... (${tokenCount} tokens)`;
-                chatHistory.scrollTop = chatHistory.scrollHeight;
-            });
-            placeholder.remove();
+            pass1Raw = await inferJSON(pass1Messages);
         } else {
-            placeholder.textContent = '⏳ LM Studio genereert antwoord...';
             const res = await fetch(`${State.url}/v1/chat/completions`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    model: State.chatModel, 
-                    messages: localHistory, 
-                    temperature: 0.1,
-                    repetition_penalty: 1.15
+                body: JSON.stringify({
+                    model: State.chatModel,
+                    messages: pass1Messages,
+                    temperature: 0.0,
+                    max_tokens: 400,
+                    repetition_penalty: 1.1
                 })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error?.message || `API foutcode: ${res.status}`);
-            rawContent = data.choices[0].message.content;
-            placeholder.remove();
-        }
-        
-        State.chatHistory.push({ role: 'user', content: text });
-        State.chatHistory.push({ role: 'assistant', content: rawContent });
-
-        const MAX_TURNS = 8;
-        const systemMsg = State.chatHistory[0];
-        const qaPart = State.chatHistory.slice(1);
-        if (qaPart.length > MAX_TURNS * 2) {
-            State.chatHistory = [systemMsg, ...qaPart.slice(-(MAX_TURNS * 2))];
+            if (!res.ok) throw new Error(data.error?.message || `API error: ${res.status}`);
+            pass1Raw = data.choices[0].message.content;
         }
 
-        const parsed = extractJSON(rawContent);
-        
+        console.log('[Pass 1 raw]', pass1Raw);
+        parsed = extractJSON(pass1Raw);
+
+        // Update state pane and document highlights from pass-1 JSON
         if (parsed) {
-            addMessage('bot', parsed.reply || "Geen tekst antwoord gevonden.", parsed.citations || []);
-            
-            const viewState = { ...parsed.state_update };
-            if (parsed.redenering) viewState.SLM_Redenering = parsed.redenering;
-            updateStatePane(viewState);
-            
-            if(parsed.citations && Array.isArray(parsed.citations)) {
+            if (parsed.state_update) updateStatePane(parsed.state_update);
+            if (parsed.citations?.length) {
                 clearHighlights();
                 parsed.citations.forEach(c => {
-                    if(c.chunkId) highlightAndScroll(c.document, c.chunkId);
+                    if (c.chunkId) highlightAndScroll(c.document, c.chunkId);
                 });
             }
         } else {
+            // Pass 1 failed to produce JSON — fall back: show raw and stop
             placeholder.remove();
-            addMessage('bot', `Systeem: Het model retourneerde geen geldige JSON structuur.\n\nRuwe output:\n${rawContent || '(leeg)'}`);
+            addMessage('bot', `⚠️ Pass 1 returned no valid JSON.\n\n${pass1Raw}`);
+            document.getElementById('send-btn').disabled = false;
+            return;
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // PASS 2 — Streamed markdown reply
+        // Uses pass-1 decision as grounding. Streams live into the bubble.
+        // Register: practical, actionable, same language as the user's question.
+        // The system prompt here is intentionally minimal — no domain hardcoding.
+        // ════════════════════════════════════════════════════════════════════
+        placeholder.remove();
+
+        // Pass 2 is "thinking" — render in a collapsible details block, smaller font
+        const thinkingWrapper = document.createElement('details');
+        thinkingWrapper.className = 'msg bot thinking-block';
+        thinkingWrapper.style.cssText = 'font-size:0.82rem; color:#555; background:#f8f8f8; border-color:#ddd;';
+        const thinkingSummary = document.createElement('summary');
+        thinkingSummary.style.cssText = 'cursor:pointer; font-size:0.8rem; color:#888; user-select:none; padding:0.3rem 0;';
+        thinkingSummary.textContent = '🧠 Redenering (klik om te tonen/verbergen)';
+        thinkingWrapper.appendChild(thinkingSummary);
+        document.getElementById('chat-history').appendChild(thinkingWrapper);
+
+        const bubble = createStreamingBubble(thinkingWrapper);
+
+        const decisionSummary = parsed.decision
+            ? `Decision: ${parsed.decision}`
+            : `Analysis: ${JSON.stringify(parsed.state_update || {})}`;
+
+        const pass2System = `You are a practical assistant. Write a clear, actionable answer based on the decision and context provided. ${langInstruction} Use markdown formatting: bullet lists for steps, bold for key terms. Be concise and avoid legalese. Do not repeat the decision verbatim — explain what it means in practice and what the user should do next.`;
+
+        const pass2Messages = [
+            { role: 'system', content: pass2System },
+            { role: 'user',   content: `${decisionSummary}\n\nContext used:\n${contextString}\n\nUser question: ${text}\n\nWrite a practical markdown answer:` }
+        ];
+
+        if (isTJS) {
+            await inferStream(pass2Messages, (chunk) => bubble.append(chunk));
+        } else {
+            // LM Studio: no streaming in this setup — single fetch, then finalize
+            placeholder.textContent = '✍️ Antwoord opstellen (pass 2)...';
+            chatHistory.appendChild(placeholder);
+            const res2 = await fetch(`${State.url}/v1/chat/completions`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: State.chatModel,
+                    messages: pass2Messages,
+                    temperature: 0.2,
+                    max_tokens: 1024,
+                    repetition_penalty: 1.15
+                })
+            });
+            const data2 = await res2.json();
+            if (!res2.ok) throw new Error(data2.error?.message || `API error: ${res2.status}`);
+            placeholder.remove();
+            bubble.append(data2.choices[0].message.content);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // PASS 3 — Conversational reformulation + follow-up questions
+        // Compresses pass-2 into ≤3 sentences + 2 grounded follow-up questions.
+        // Uses accumulated intent graph so follow-ups build on prior context.
+        // Non-streaming (short output), appended below the streaming bubble.
+        // ════════════════════════════════════════════════════════════════════
+        const replyText = bubble.finalize(parsed.citations || []);
+
+        // Build intent context from accumulated state for grounded follow-ups
+        const accumulatedFacts = (State.jsonState.facts_gathered || []).join('; ') || 'none yet';
+        const intentHistory = (State.jsonState.intent_history || []);
+        const intentCtx = intentHistory.length
+            ? `Prior intents: ${intentHistory.join(' → ')} → ${State.jsonState.intent}`
+            : `Current intent: ${State.jsonState.intent || 'unknown'}`;
+
+        const pass3System = `You are a concise advisor. Compress the provided draft answer and add follow-up questions.
+Output format (use exact structure):
+[SHORT ANSWER]
+2-3 sentences max. ${langInstruction} No bullet lists. No headers. No legalese.
+
+[FOLLOW-UP]
+Exactly 2 short questions (one per line, starting with >) that would help clarify or advance the user's intent.
+Base the questions on the accumulated context and what is still unclear or unresolved.
+The questions must also be in ${userLang}.`;
+
+        const pass3User = `User question: ${text}
+
+Accumulated context:
+- ${intentCtx}
+- Known facts: ${accumulatedFacts}
+- Current decision: ${State.jsonState.current_decision || 'see state'}
+
+Draft answer to compress:
+${replyText}
+
+Rewrite as short answer + 2 follow-up questions:`;
+
+        const pass3Messages = [
+            { role: 'system', content: pass3System },
+            { role: 'user',   content: pass3User }
+        ];
+
+        let pass3Text = '';
+        try {
+            if (isTJS) {
+                pass3Text = await inferJSON(pass3Messages);  // inferJSON: no stream, 400 tokens max
+            } else {
+                const res3 = await fetch(`${State.url}/v1/chat/completions`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: State.chatModel,
+                        messages: pass3Messages,
+                        temperature: 0.3,
+                        max_tokens: 300,
+                        repetition_penalty: 1.1
+                    })
+                });
+                const data3 = await res3.json();
+                if (res3.ok) pass3Text = data3.choices[0].message.content;
+            }
+        } catch(e3) {
+            console.warn('Pass 3 failed, skipping:', e3);
+        }
+
+        // Append pass-3 output as a separate styled block below the streaming bubble
+        if (pass3Text.trim()) {
+            const p3el = document.createElement('div');
+            p3el.className = 'msg bot pass3-block';
+            const p3body = document.createElement('div');
+            p3body.className = 'md-body';
+            // Parse [SHORT ANSWER] and [FOLLOW-UP] sections into clean markdown
+            const p3md = pass3Text
+                .replace(/\[SHORT ANSWER\]/gi, '')
+                .replace(/\[FOLLOW-UP\]/gi, '\n\n---\n\n**Mogelijke vervolgvragen:**\n\n')
+                .trim();
+            p3body.innerHTML = typeof marked !== 'undefined' ? marked.parse(p3md) : p3md;
+            p3el.appendChild(p3body);
+            // Make follow-up lines clickable to auto-send
+            p3el.querySelectorAll('blockquote p, blockquote').forEach(el => {
+                const q = el.textContent.trim().replace(/^>\s*/, '');
+                if (q.length > 5) {
+                    el.style.cursor = 'pointer';
+                    el.title = 'Klik om deze vraag te stellen';
+                    el.addEventListener('click', () => {
+                        document.getElementById('chat-input').value = q;
+                        document.getElementById('send-btn').click();
+                    });
+                }
+            });
+            document.getElementById('chat-history').appendChild(p3el);
+            document.getElementById('chat-history').scrollTop = document.getElementById('chat-history').scrollHeight;
+        }
+
+        // ── Update conversation history
+        // Store compact decision only — NOT full reply prose.
+        // Full reply in history bloats the context window and causes pass 1
+        // JSON failures on follow-ups (model runs out of budget before closing JSON).
+        const compactAssistant = JSON.stringify({
+    decision: parsed.decision || '',
+    state_update: {
+        intent: parsed.state_update?.intent || '',
+        user_facts: parsed.state_update?.user_facts || [],
+        facts_gathered: (parsed.state_update?.facts_gathered || []).slice(0, 3)
+    },
+    citations: (parsed.citations || []).slice(0, 2)
+});
+        State.chatHistory.push({ role: 'user', content: text });
+        State.chatHistory.push({ role: 'assistant', content: compactAssistant });
+
+        const MAX_TURNS = 8;
+        const sysMsg = State.chatHistory[0];
+        const qa = State.chatHistory.slice(1);
+        if (qa.length > MAX_TURNS * 2) State.chatHistory = [sysMsg, ...qa.slice(-(MAX_TURNS * 2))];
 
     } catch (e) {
         placeholder.remove();
-        addMessage('bot', `Systeemfout: ${e.message}`);
+        addMessage('bot', `System error: ${e.message}`);
         console.error(e);
     }
+
     document.getElementById('send-btn').disabled = false;
 });
 
@@ -925,5 +1298,17 @@ async function nukeTjsCache() {
     console.log('Cache cleared. Reload the page to re-download from CDN.');
 }
 </script>
+
+<div id="md-hint" popover style="padding:1rem; max-width:320px; font-size:0.85rem; border:1px solid #ccc; border-radius:6px; background:white;">
+  <strong>Goede Markdown voor slimme chunking:</strong><br><br>
+  ✅ Gebruik koppen (# ## ###) voor elk onderwerp<br>
+  ✅ Één onderwerp per sectie<br>
+  ✅ Korte alinea's onder elke kop<br>
+  ✅ Lijsten voor opsommingen<br><br>
+  ❌ Geen lange alinea's zonder koppen<br>
+  ❌ Geen tabellen als primaire structuur<br>
+  ❌ Geen diep geneste lijsten (3+ niveaus)<br>
+  ❌ Geen doorlopende tekst over meerdere onderwerpen
+</div>
 </body>
 </html>
