@@ -1,1305 +1,285 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fietsbel CE b16 - Deterministic RAG</title>
-<!-- Local offline markdown parser -->
-<script src="marked.min.js"></script>
-<!-- transformers.min.js is loaded dynamically on demand — place next to index.html -->
-<style>
-:root {
-  --bg: #f9f9f9; --pane-bg: #ffffff; --text: #222;
-  --border: #d0d0d0; --muted: #777; --primary: #0056b3;
-  --hl: #ffe066; --user-msg: #eef4fc; --sys-msg: #f4f4f4;
-  --font-sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: 'Consolas', monospace;
-}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fietsbel CE — Deterministic RAG</title>
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body, html { height: 100%; font-family: var(--font-sans); color: var(--text); background: var(--bg); overflow: hidden; }
+  <!--
+    Required files (place next to this index.html):
+      marked.min.js        — markdown parser, always required
+      transformers.min.js  — loaded on demand for Browser AI backend
+      mermaid.min.js       — optional; enables diagram rendering in documents
+  -->
+  <script src="marked.min.js"></script>
+  <script src="mermaid.min.js" onerror="console.info('mermaid.min.js not found — diagrams disabled')"></script>
 
-/* ── MODALS & OVERLAYS ── */
-#overlay {
-  position: fixed; inset: 0; background: rgba(255,255,255,0.95);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
-}
-.modal-box { border: 1px solid var(--border); padding: 2rem; background: var(--pane-bg); border-radius: 6px; width: 450px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.modal-box h2 { font-size: 1.2rem; margin-bottom: 0.5rem; }
-.modal-box p.sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.4; }
-.field { margin-bottom: 1rem; }
-.field label { display: block; font-size: 0.8rem; font-weight: bold; margin-bottom: 0.3rem; text-transform: uppercase; color: var(--muted); }
-select, input[type="file"], input[type="text"] { width: 100%; padding: 0.5rem; font-family: var(--font-sans); border: 1px solid var(--border); border-radius: 4px; }
-button { padding: 0.6rem 1rem; border: none; background: var(--primary); color: white; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 1rem; }
-button:hover { background: #004494; }
-button:disabled { background: #aaa; cursor: not-allowed; }
+  <style>
+    /* ── Design tokens ────────────────────────────────────────────────────── */
+    :root {
+      --bg: #f9f9f9;  --pane-bg: #fff;   --text: #222;      --border: #d0d0d0;
+      --muted: #777;  --primary: #0056b3; --hl: #ffe066;
+      --user-msg: #eef4fc;  --sys-msg: #f4f4f4;
+      --sans: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --mono: Consolas, monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: var(--sans); color: var(--text);
+                 background: var(--bg); overflow: hidden; }
 
-#progress-container { display: none; margin-top: 1rem; text-align: center; }
-#progress-bar { width: 100%; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
-#progress-fill { width: 0%; height: 100%; background: var(--primary); transition: width 0.2s; }
+    /* ── Dialog / Setup ───────────────────────────────────────────────────── */
+    dialog { border: none; padding: 0; background: transparent; max-width: none; }
+    dialog::backdrop { background: rgba(255,255,255,.95); }
+    .dialog-box { border: 1px solid var(--border); padding: 2rem; background: var(--pane-bg);
+                  border-radius: 6px; width: 460px; box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+    .dialog-box h2 { font-size: 1.2rem; margin-bottom: .5rem; }
+    .dialog-box .sub { color: var(--muted); font-size: .88rem; margin-bottom: 1.5rem; line-height: 1.45; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: .78rem; font-weight: 700; margin-bottom: .3rem;
+                   text-transform: uppercase; color: var(--muted); }
+    select, input[type=file], input[type=text] { width: 100%; padding: .5rem;
+      font-family: var(--sans); border: 1px solid var(--border); border-radius: 4px; }
+    button { padding: .6rem 1rem; border: none; background: var(--primary); color: #fff;
+             border-radius: 4px; cursor: pointer; font-weight: 700; width: 100%; margin-top: .5rem; }
+    button:hover:not(:disabled) { background: #004494; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+    .panel[hidden] { display: none !important; }
 
-/* ── MAIN LAYOUT ── */
-#app { display: grid; grid-template-columns: 50fr 50fr; height: 100vh; }
+    /* ── Native progress bar ──────────────────────────────────────────────── */
+    progress { display: block; width: 100%; height: 8px; border: none;
+               border-radius: 4px; margin-top: .5rem; }
+    progress::-webkit-progress-bar  { background: #eee; border-radius: 4px; }
+    progress::-webkit-progress-value{ background: var(--primary); transition: width .2s; }
+    progress::-moz-progress-bar     { background: var(--primary); }
 
-/* Left: Documents */
-#left-pane { border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
-.pane-header { padding: 0.6rem 1rem; background: #eee; border-bottom: 1px solid var(--border); font-size: 0.85rem; font-weight: bold; text-transform: uppercase; color: var(--muted); flex-shrink: 0; }
-#docs-container { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem; scroll-behavior: smooth; }
-.doc-frame { border: 1px solid var(--border); background: var(--pane-bg); border-radius: 4px; display: flex; flex-direction: column; min-height: 250px; max-height: 45vh; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: box-shadow 0.3s ease; }
-.doc-title { padding: 0.5rem 1rem; background: #fdfdfd; font-family: var(--font-mono); font-size: 0.85rem; border-bottom: 1px solid #eaeaea; font-weight: bold; color: #444; }
-.doc-content { flex: 1; overflow-y: auto; padding: 1.5rem; font-size: 0.95rem; line-height: 1.6; scroll-behavior: smooth; }
-.doc-content h1, .doc-content h2, .doc-content h3 { margin-top: 1.2rem; margin-bottom: 0.5rem; }
-.doc-content p, .doc-content ul { margin-bottom: 0.8rem; }
-mark.ai-hl { background: var(--hl); padding: 0 0.2rem; border-radius: 2px; box-shadow: 0 0 0 1px #e6c84c; transition: background 0.3s; }
+    /* ── App layout: 50 / 50 columns ─────────────────────────────────────── */
+    #app { display: grid; grid-template-columns: 1fr 1fr; height: 100vh; }
+    #app[hidden] { display: none !important; }
+    aside { border-right: 1px solid var(--border); display: flex; flex-direction: column;
+            overflow: hidden; }
+    #right-pane { display: grid; grid-template-rows: 35fr 65fr; overflow: hidden; }
 
-/* Right: State & Chat */
-#right-pane { display: grid; grid-template-rows: 35fr 65fr; overflow: hidden; }
-#state-pane { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; background: #fdfdfd; }
-#state-content { flex: 1; overflow-y: auto; padding: 1rem; font-family: var(--font-mono); font-size: 0.85rem; color: #333; white-space: pre-wrap; }
+    /* ── Pane chrome ──────────────────────────────────────────────────────── */
+    .pane-hdr { padding: .6rem 1rem; background: #eee; border-bottom: 1px solid var(--border);
+                font-size: .82rem; font-weight: 700; text-transform: uppercase;
+                color: var(--muted); flex-shrink: 0; }
 
-#chat-pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane-bg); }
-#chat-history { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
-.msg { max-width: 90%; padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.95rem; line-height: 1.5; }
-.msg.user { align-self: flex-end; background: var(--user-msg); border: 1px solid #dce8f6; }
-.msg.bot { align-self: flex-start; background: var(--sys-msg); border: 1px solid #e5e5e5; }
+    /* ── Document viewer ──────────────────────────────────────────────────── */
+    #docs-container { flex: 1; overflow-y: auto; padding: 1rem;
+                      display: flex; flex-direction: column; gap: 1rem; }
+    article.doc-frame { border: 1px solid var(--border); background: var(--pane-bg);
+                        border-radius: 4px; display: flex; flex-direction: column;
+                        min-height: 250px; max-height: 45vh; }
+    .doc-title  { padding: .5rem 1rem; font-family: var(--mono); font-size: .85rem;
+                  border-bottom: 1px solid #eaeaea; font-weight: 700; color: #444;
+                  flex-shrink: 0; }
+    .doc-content { flex: 1; overflow-y: auto; padding: 1.5rem;
+                   font-size: .95rem; line-height: 1.6; }
+    .doc-content h1, .doc-content h2, .doc-content h3 { margin-top: 1.2rem; margin-bottom: .5rem; }
+    .doc-content p, .doc-content ul { margin-bottom: .8rem; }
 
-/* Streaming placeholder pulse */
-.msg.bot.streaming {
-  color: var(--muted);
-  font-style: italic;
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
-}
+    /* ── State pane ───────────────────────────────────────────────────────── */
+    #state-section { border-bottom: 1px solid var(--border); display: flex;
+                     flex-direction: column; overflow: hidden; background: #fdfdfd; }
+    output#state-output { display: block; flex: 1; overflow-y: auto; padding: 1rem;
+                          font-family: var(--mono); font-size: .83rem; white-space: pre-wrap; }
 
-.citation-chip { display: inline-block; font-family: var(--font-mono); font-size: 0.75rem; background: #e0e0e0; padding: 4px 8px; border-radius: 4px; margin-top: 8px; margin-right: 5px; color: #333; cursor: pointer; transition: background 0.2s; }
-.citation-chip:hover { background: #d0d0d0; }
-.citation-chip.chip-active { background: var(--hl); color: #222; box-shadow: 0 0 0 1px #e6c84c; }
+    /* ── Chat pane ────────────────────────────────────────────────────────── */
+    #chat-section { display: flex; flex-direction: column; overflow: hidden; }
+    #chat-history { flex: 1; overflow-y: auto; padding: 1.5rem;
+                    display: flex; flex-direction: column; gap: 1rem; }
+    .msg { max-width: 90%; padding: .8rem 1rem; border-radius: 6px;
+           font-size: .95rem; line-height: 1.5; }
+    .msg.user { align-self: flex-end; background: var(--user-msg); border: 1px solid #dce8f6; }
+    .msg.bot  { align-self: flex-start; background: var(--sys-msg); border: 1px solid #e5e5e5; }
+    .msg.bot.streaming { color: var(--muted); font-style: italic;
+                         animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
 
-/* Markdown rendering in bot bubbles */
-.msg.bot .md-body { line-height: 1.65; }
-.msg.bot .md-body h1,.msg.bot .md-body h2,.msg.bot .md-body h3 { font-weight:700; margin:0.9rem 0 0.35rem; }
-.msg.bot .md-body h1 { font-size:1.15rem; }
-.msg.bot .md-body h2 { font-size:1.05rem; }
-.msg.bot .md-body h3 { font-size:0.97rem; color:#444; }
-.msg.bot .md-body p { margin-bottom:0.55rem; }
-.msg.bot .md-body ul,.msg.bot .md-body ol { padding-left:1.4em; margin-bottom:0.55rem; }
-.msg.bot .md-body li { margin-bottom:0.2rem; }
-.msg.bot .md-body strong { font-weight:700; }
-.msg.bot .md-body em { font-style:italic; color:#555; }
-.msg.bot .md-body code { font-family:var(--font-mono); font-size:0.85em; background:#e8e8e8; padding:0.1em 0.35em; border-radius:3px; }
-.msg.bot .md-body blockquote { border-left:3px solid var(--primary); margin:0.4rem 0; padding:0.3rem 0.8rem; color:#555; background:#f0f4fa; border-radius:0 4px 4px 0; }
-/* Streaming cursor blink on the md-body div */
-.md-body.streaming-cursor::after { content:'▋'; display:inline; animation:blink 0.8s step-end infinite; color:var(--primary); margin-left:1px; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-/* Pass 3 conversational block */
-.pass3-block { background: #f0f4fa; border: 1px solid #c8d8f0; margin-top: -0.5rem; border-radius: 0 0 6px 6px; border-top: 2px dashed #c8d8f0; }
-.pass3-block .md-body blockquote { cursor: pointer; background: #e4ecf8; border-left-color: #4a90d9; }
-.pass3-block .md-body blockquote:hover { background: #d4e4f8; }
+    /* ── Input form ───────────────────────────────────────────────────────── */
+    #input-form { padding: 1rem; border-top: 1px solid var(--border); display: flex;
+                  gap: .5rem; align-items: flex-end; background: #fafafa; flex-shrink: 0; }
+    #chat-input { flex: 1; padding: .6rem; border: 1px solid var(--border); border-radius: 4px;
+                  font-family: var(--sans); font-size: .95rem; resize: none; height: 50px; }
+    #new-search-btn, #send-btn { width: auto; padding: 0 1rem; height: 50px;
+                                  margin-top: 0; flex-shrink: 0; }
 
-#input-area { padding: 1rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem; background: #fafafa; flex-shrink: 0; }
-#chat-input { flex: 1; padding: 0.6rem; border: 1px solid var(--border); border-radius: 4px; font-family: var(--font-sans); font-size: 0.95rem; resize: none; height: 50px; }
-#send-btn { width: auto; margin-top: 0; padding: 0 1.5rem; }
-</style>
+    /* ── Markdown in bubbles ──────────────────────────────────────────────── */
+    .md-body { line-height: 1.65; }
+    .md-body h1,.md-body h2,.md-body h3 { font-weight: 700; margin: .9rem 0 .35rem; }
+    .md-body h1 { font-size: 1.15rem; } .md-body h2 { font-size: 1.05rem; }
+    .md-body h3 { font-size: .97rem; color: #444; }
+    .md-body p  { margin-bottom: .55rem; }
+    .md-body ul, .md-body ol { padding-left: 1.4em; margin-bottom: .55rem; }
+    .md-body li { margin-bottom: .2rem; }
+    .md-body strong { font-weight: 700; } .md-body em { font-style: italic; color: #555; }
+    .md-body code { font-family: var(--mono); font-size: .85em; background: #e8e8e8;
+                    padding: .1em .35em; border-radius: 3px; }
+    .md-body blockquote { border-left: 3px solid var(--primary); margin: .4rem 0;
+                          padding: .3rem .8rem; color: #555; background: #f0f4fa;
+                          border-radius: 0 4px 4px 0; }
+    .md-body.streaming-cursor::after { content: '▋'; display: inline;
+      animation: blink .8s step-end infinite; color: var(--primary); margin-left: 1px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* ── Pass-3 follow-up block ───────────────────────────────────────────── */
+    .pass3-block { background: #f0f4fa; border: 1px solid #c8d8f0;
+                   border-top: 2px dashed #c8d8f0; border-radius: 0 0 6px 6px; margin-top: -.5rem; }
+    .pass3-block .md-body blockquote { cursor: pointer; background: #e4ecf8;
+                                        border-left-color: #4a90d9; }
+    .pass3-block .md-body blockquote:hover { background: #d4e4f8; }
+
+    /* ── Citation chips ───────────────────────────────────────────────────── */
+    .citation-chip { display: inline-block; font-family: var(--mono); font-size: .75rem;
+                     background: #e0e0e0; padding: 4px 8px; border-radius: 4px;
+                     margin: 8px 5px 0 0; cursor: pointer; transition: background .2s; }
+    .citation-chip:hover  { background: #d0d0d0; }
+    .citation-chip.chip-active { background: var(--hl); color: #222;
+                                  box-shadow: 0 0 0 1px #e6c84c; }
+
+    /* ── Popover hint ─────────────────────────────────────────────────────── */
+    [popover] { padding: 1rem; max-width: 320px; font-size: .85rem;
+                border: 1px solid #ccc; border-radius: 6px; background: white; }
+  </style>
 </head>
+
 <body>
 
-<!-- SETUP MODAL -->
-<div id="overlay">
-  <div class="modal-box" id="box-choice">
-    <h2>Fietsbel CE b16 — Kies backend</h2>
-    <p class="sub">LM Studio vereist een lokale server. Browser AI draait volledig in de browser via Transformers.js v4.2+.</p>
-    <button id="btn-choose-lms" style="margin-bottom:0.5rem;">🖥 LM Studio &nbsp;— lokaal, snel</button>
-    <button id="btn-choose-tjs">🌐 Browser AI &nbsp;— geen server nodig</button>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SETUP DIALOG — native <dialog> modal, panels shown/hidden one at a time
+══════════════════════════════════════════════════════════════════════════ -->
+<dialog id="setup-dialog">
+
+  <!-- Panel A: choose backend ──────────────────────────────────────────── -->
+  <div class="dialog-box panel" id="panel-choice">
+    <h2>Fietsbel CE — Kies backend</h2>
+    <p class="sub">Selecteer de inferentiebackend voor deze sessie.</p>
+    <button id="btn-choice-lms"   style="margin-bottom:.4rem">🖥 LM Studio — lokaal, zonder reranking</button>
+    <button id="btn-choice-llama" style="margin-bottom:.4rem">⚙️ llama.cpp — lokaal, met reranking + streaming</button>
+    <button id="btn-choice-tjs">🌐 Browser AI — geen server nodig</button>
   </div>
 
-  <div class="modal-box" id="box-lmstudio" style="display:none;">
-    <h2>Fietsbel CE b16 — LM Studio</h2>
-    <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld. <em>Reranking is niet beschikbaar via LM Studio (geen /v1/rerank endpoint) — retrieval werkt hier via hybride vector+keyword. Gebruik Browser AI voor volledige pipeline inclusief reranker.</em></p>
+  <!-- Panel B: LM Studio ───────────────────────────────────────────────── -->
+  <div class="dialog-box panel" id="panel-lmstudio" hidden>
+    <h2>Fietsbel CE — LM Studio</h2>
+    <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld.
+      Reranking is niet beschikbaar — retrieval gebruikt hybride vector+keyword.</p>
     <div class="field">
-      <label>API Endpoint (LM Studio)</label>
-      <input type="text" id="cfg-url" value="http://127.0.0.1:1234">
+      <label>API Endpoint</label>
+      <input type="text" id="lms-url" value="http://127.0.0.1:1234">
     </div>
-    <div style="display:flex; gap:0.5rem;">
-      <button id="btn-fetch" style="margin-top:0;">Verbind met LM Studio</button>
-    </div>
-    <div id="model-selects" style="display:none; margin-top: 1.5rem;">
+    <button id="btn-lms-connect">Verbind met LM Studio</button>
+    <div id="lms-model-selects" hidden style="margin-top:1.5rem">
+      <div class="field"><label>Chat Model</label><select id="lms-chat"></select></div>
+      <div class="field"><label>Embedding Model</label><select id="lms-embed"></select></div>
       <div class="field">
-        <label>Chat Model</label>
-        <select id="cfg-chat"></select>
+        <label>Selecteer Markdown Documenten
+          <button type="button" popovertarget="md-hint"
+            style="all:unset;cursor:pointer;font-size:.9rem;margin-left:.3rem">ⓘ</button>
+        </label>
+        <input type="file" id="lms-files" multiple accept=".md">
       </div>
-      <div class="field">
-        <label>Embedding Model</label>
-        <select id="cfg-embed"></select>
-      </div>
-      <div class="field">
-        <label for="cfg-files">Selecteer Markdown Documenten</label>
-        <button type="button" style="all:unset; cursor:pointer; font-size:0.9rem; margin-left:0.2rem;" popovertarget="md-hint">ⓘ</button>
-      <input type="file" id="cfg-files" multiple accept=".md">
-      </div>
-      <button id="btn-start">Start Platform</button>
+      <button id="btn-lms-start">Start Platform</button>
     </div>
   </div>
 
-  <div class="modal-box" id="box-tjs" style="display:none;">
-    <h2>Fietsbel CE b16 — Browser AI</h2>
-    <p class="sub">Modellen worden gedownload van HuggingFace CDN. Bevat Nomic 1.5 (q4), BGE Reranker base (Xenova, browser-compatibel) en Granite 4.0 Micro.</p>
-    <button id="btn-tjs-load">⬇ Download &amp; Laad Modellen</button>
-    <div id="tjs-model-progress" style="display:none; margin-top:1rem;">
-      <div id="tjs-prog-text" style="font-size:0.85rem; color:var(--muted); margin-bottom:0.3rem;">Laden...</div>
-      <div id="progress-bar"><div id="tjs-prog-fill" style="width:0%; height:100%; background:var(--primary); transition:width 0.3s;"></div></div>
+  <!-- Panel C: llama.cpp ───────────────────────────────────────────────── -->
+  <div class="dialog-box panel" id="panel-llamacpp" hidden>
+    <h2>Fietsbel CE — llama.cpp</h2>
+    <p class="sub">Vereist llama.cpp server met CORS.
+      Ondersteunt reranking via <code>/v1/rerank</code> en SSE streaming.
+      Selecteer "(geen reranker)" als je geen reranker hebt geladen.</p>
+    <div class="field">
+      <label>API Endpoint</label>
+      <input type="text" id="llama-url" value="http://127.0.0.1:8080">
     </div>
-    <div id="tjs-file-section" style="display:none; margin-top:1.5rem;">
+    <button id="btn-llama-connect">Verbind met llama.cpp</button>
+    <div id="llama-model-selects" hidden style="margin-top:1.5rem">
+      <div class="field"><label>Chat Model</label><select id="llama-chat"></select></div>
+      <div class="field"><label>Embedding Model</label><select id="llama-embed"></select></div>
+      <div class="field"><label>Reranker Model (optioneel)</label><select id="llama-rerank"></select></div>
       <div class="field">
-        <label>Selecteer Markdown Documenten</label>
-        <button type="button" style="all:unset; cursor:pointer; font-size:0.9rem; margin-left:0.2rem;" popovertarget="md-hint">ⓘ</button>
-        <input type="file" id="cfg-files-tjs" multiple accept=".md">
+        <label>Selecteer Markdown Documenten
+          <button type="button" popovertarget="md-hint"
+            style="all:unset;cursor:pointer;font-size:.9rem;margin-left:.3rem">ⓘ</button>
+        </label>
+        <input type="file" id="llama-files" multiple accept=".md">
+      </div>
+      <button id="btn-llama-start">Start Platform</button>
+    </div>
+  </div>
+
+  <!-- Panel D: Transformers.js ─────────────────────────────────────────── -->
+  <div class="dialog-box panel" id="panel-transformers" hidden>
+    <h2>Fietsbel CE — Browser AI</h2>
+    <p class="sub">Modellen worden gedownload van HuggingFace CDN en gecached in de browser.
+      Bevat Nomic 1.5 (q4 embed), BGE Reranker base (q8) en Granite 4.0 Micro (LLM).</p>
+    <button id="btn-tjs-load">⬇ Download &amp; Laad Modellen</button>
+    <div id="tjs-progress" hidden style="margin-top:1rem">
+      <p id="tjs-prog-text" style="font-size:.85rem;color:var(--muted);margin-bottom:.3rem">Laden...</p>
+      <progress id="tjs-prog-bar" max="100" value="0"></progress>
+    </div>
+    <div id="tjs-file-section" hidden style="margin-top:1.5rem">
+      <div class="field">
+        <label>Selecteer Markdown Documenten
+          <button type="button" popovertarget="md-hint"
+            style="all:unset;cursor:pointer;font-size:.9rem;margin-left:.3rem">ⓘ</button>
+        </label>
+        <input type="file" id="tjs-files" multiple accept=".md">
       </div>
       <button id="btn-tjs-start">Start Platform</button>
     </div>
   </div>
 
-  <div id="progress-container" style="display:none; margin-top:1rem; width:450px; text-align:center;">
-    <div id="progress-text" style="font-size:0.85rem; font-weight:bold; color:var(--muted);">Documenten verwerken...</div>
-    <div id="progress-bar-embed" style="margin-top:0.5rem; background:#eee; border-radius:4px; overflow:hidden; height:8px;">
-      <div id="progress-fill" style="width:0%; height:100%; background:var(--primary); transition:width 0.2s;"></div>
-    </div>
+  <!-- Panel E: document embedding progress ────────────────────────────── -->
+  <div class="dialog-box panel" id="panel-loading" hidden>
+    <h2>Documenten laden...</h2>
+    <p id="load-text" style="font-size:.85rem;color:var(--muted);margin-bottom:.5rem">Verwerken...</p>
+    <progress id="load-bar" max="100" value="0"></progress>
   </div>
-</div>
 
-<!-- MAIN UI -->
-<div id="app">
-  <div id="left-pane">
-    <div class="pane-header">Document Viewer</div>
+</dialog>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     MAIN APPLICATION
+══════════════════════════════════════════════════════════════════════════ -->
+<main id="app" hidden>
+
+  <!-- Left: document viewer ──────────────────────────────────────────── -->
+  <aside id="docs-pane">
+    <header class="pane-hdr">Document Viewer</header>
     <div id="docs-container"></div>
-  </div>
+  </aside>
+
+  <!-- Right: state pane + chat pane ──────────────────────────────────── -->
   <div id="right-pane">
-    <div id="state-pane">
-      <div class="pane-header">Actuele Situatie, Intentie & Redenering (JSON)</div>
-      <div id="state-content">{
+
+    <section id="state-section">
+      <header class="pane-hdr">Actuele Situatie, Intentie &amp; Redenering (JSON)</header>
+      <output id="state-output" role="status">{
   "status": "Wachtend op invoer..."
-}</div>
-    </div>
-    <div id="chat-pane">
-      <div class="pane-header">Fietsbel CE b16 — Multidisciplinair Overleg</div>
-      <div id="chat-history"></div>
-      <div id="input-area">
-        <textarea id="chat-input" placeholder="Stel een vraag over de documenten..."></textarea>
-        <button id="new-search-btn" title="Nieuwe zoekopdracht — zoekt opnieuw in plaats van vorige chunks hergebruiken" style="width:auto; margin-top:0; padding:0 0.8rem; background:#888; font-size:1.1rem; flex-shrink:0;">🔍</button>
-        <button id="send-btn">Stuur</button>
-      </div>
-    </div>
+}</output>
+    </section>
+
+    <section id="chat-section">
+      <header class="pane-hdr" id="chat-label">Fietsbel CE — Multidisciplinair Overleg</header>
+      <div id="chat-history" role="log" aria-live="polite"></div>
+      <form id="input-form" autocomplete="off">
+        <textarea id="chat-input" rows="2"
+          placeholder="Stel een vraag over de documenten..."></textarea>
+        <button type="button" id="new-search-btn"
+          title="Nieuwe zoekopdracht — zoekt opnieuw i.p.v. vorige chunks hergebruiken"
+          style="background:#888">🔍</button>
+        <button type="submit" id="send-btn">Stuur</button>
+      </form>
+    </section>
+
   </div>
-</div>
+</main>
 
-<script>
-if (typeof marked === 'undefined') {
-    alert("CRITICAL ERROR: marked.min.js ontbreekt.\nDownload dit bestand en plaats het in dezelfde map als index.html om offline te kunnen werken.");
-}
-
-const State = {
-    url: "http://127.0.0.1:1234",
-    chatModel: "",
-    embedModel: "",
-    backend: null,
-    tjsEmbedPipeline: null,
-    tjsLLMPipeline: null,
-    tjsRerankTokenizer: null,  // AutoTokenizer for cross-encoder reranker
-    tjsRerankModel: null,      // AutoModelForSequenceClassification for reranker
-    TextStreamer: null,
-    chunks: [],
-    chatHistory: [],
-    jsonState: { intent: "Onbekend", facts_gathered: [] },
-    lastChunks: null,       // cached retrieval result from previous turn
-    forceNewSearch: false   // set true when user clicks 🔍 button
-};
-
-document.getElementById('btn-choose-lms').addEventListener('click', () => {
-    State.backend = 'lmstudio';
-    document.getElementById('box-choice').style.display = 'none';
-    document.getElementById('box-lmstudio').style.display = 'block';
-});
-
-document.getElementById('btn-choose-tjs').addEventListener('click', () => {
-    State.backend = 'transformers';
-    document.getElementById('box-choice').style.display = 'none';
-    document.getElementById('box-tjs').style.display = 'block';
-});
-
-document.getElementById('btn-fetch').addEventListener('click', async () => {
-    State.url = document.getElementById('cfg-url').value.replace(/\/+$/, '');
-    const btn = document.getElementById('btn-fetch');
-    btn.textContent = "Verbinden...";
-    try {
-        const res = await fetch(`${State.url}/v1/models`);
-        if(!res.ok) throw new Error("HTTP error");
-        const data = await res.json();
-        const models = data.data.map(m => m.id);
-        
-        const cSel = document.getElementById('cfg-chat');
-        const eSel = document.getElementById('cfg-embed');
-        cSel.innerHTML = ''; eSel.innerHTML = '';
-        
-        models.forEach(m => {
-            cSel.add(new Option(m, m));
-            eSel.add(new Option(m, m));
-        });
-        
-        models.forEach((m, i) => {
-            if(m.toLowerCase().includes('nomic') || m.toLowerCase().includes('embed')) eSel.selectedIndex = i;
-            if(m.toLowerCase().includes('granite') || m.toLowerCase().includes('instruct')) cSel.selectedIndex = i;
-        });
-
-        document.getElementById('model-selects').style.display = 'block';
-        btn.style.display = 'none';
-    } catch (e) {
-        alert("Kan geen verbinding maken met LM Studio. Zorg dat de server draait en CORS is toegestaan.");
-        btn.textContent = "Probeer Opnieuw";
-    }
-});
-
-document.getElementById('btn-start').addEventListener('click', async () => {
-    const files = document.getElementById('cfg-files').files;
-    if(files.length === 0) return alert("Selecteer minstens één markdown bestand.");
-    State.chatModel = document.getElementById('cfg-chat').value;
-    State.embedModel = document.getElementById('cfg-embed').value;
-    document.getElementById('btn-start').style.display = 'none';
-    document.getElementById('box-lmstudio').style.display = 'none';
-    await initAndStart(files);
-});
-
-async function initAndStart(files) {
-    document.getElementById('progress-container').style.display = 'block';
-
-    for(let i = 0; i < files.length; i++) {
-        const text = await files[i].text();
-        renderDocumentPane(files[i].name, text);
-        await buildEmbeddings(files[i].name, text);
-    }
-
-    const loadedFileNames = Array.from(files).map(f => f.name);
-    const fileListStr = loadedFileNames.join(', ');
-    const exampleFile = loadedFileNames[0] || 'document.md';
-    const exampleChunkId = `${exampleFile}_3`;
-
-State.chatHistory.push({
-    role: "system",
-    content: `You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.
-
-Context format: [Doc: <name>, ChunkId: <name>_<N>]
-
-Output valid JSON only. No markdown, no prose, no explanations. Start with { and end with }.
-{"decision":"<one short phrase>","state_update":{"intent":"<what user wants THIS turn>","user_facts":["<role or fact stated by user>"],"facts_gathered":["<fact from context>"]},"citations":[{"document":"${exampleFile}","chunkId":"${exampleChunkId}"}]}
-
-Rules: no reply field. user_facts = from the question itself. facts_gathered = from context only. Copy chunkId exactly.`
-});
-   
-    document.getElementById('overlay').style.display = 'none';
-}
-
-async function loadTransformersBackend(onProgress) {
-    let pipeline, env, TextStreamer;
-    let AutoTokenizer, AutoModel, AutoModelForSequenceClassification, mean_pooling, layer_norm; 
-    try {
-        ({ 
-            pipeline, env, TextStreamer, 
-            AutoTokenizer, AutoModel, AutoModelForSequenceClassification,
-            mean_pooling, layer_norm 
-        } = await import('./transformers.min.js'));
-    } catch(e) {
-        throw new Error("transformers.min.js niet gevonden naast index.html.");
-    }
-
-    State.TextStreamer = TextStreamer;
-    State.tjsMath = { mean_pooling, layer_norm }; 
-
-    env.allowLocalModels  = false;
-    env.allowRemoteModels = true;
-    env.useBrowserCache   = true;
-
-    const embedDevice = (typeof navigator.gpu !== 'undefined') ? 'webgpu' : 'wasm';
-
-    // ── STEP 1: Nomic embedding model ──────────────────────────────────────────
-    onProgress('Tokenizer & Model laden (nomic-embed-text-v1.5 q4)...', 5);
-    State.tjsTokenizer = await AutoTokenizer.from_pretrained('nomic-ai/nomic-embed-text-v1.5');
-    State.tjsEmbedModel = await AutoModel.from_pretrained('nomic-ai/nomic-embed-text-v1.5', {
-        device: embedDevice,
-        dtype: 'q4',
-        progress_callback: (x) => {
-            if (x.status === 'progress') {
-                const pct = 5 + (x.progress || 0) * 0.15;
-                onProgress(`Embedding: ${x.file || ''} ${Math.round(x.progress || 0)}%`, pct);
-            }
-        }
-    });
-
-    // ── STEP 2: BGE Reranker via AutoModelForSequenceClassification ───────────
-    // WHY not pipeline('text-classification'):
-    //   It ignores text_pair, treats input as a single string, returns sigmoid-squashed
-    //   label scores always ~1.0 regardless of query. Cross-encoders need batched
-    //   (query, passage) pairs → raw logits → sigmoid applied by us.
-    // WHY Xenova/bge-reranker-base and NOT bge-reranker-v2-m3 browser exports:
-    //   All v2-m3 ONNX exports use external data format (model.onnx stub + 2.2 GB sidecar).
-    //   ONNX Runtime WebGPU/WASM needs Module.MountedFiles for that — not available for
-    //   remote HF CDN fetches → "Deserialize tensor failed. MountedFiles not available".
-    //   Xenova/bge-reranker-base = single self-contained model.onnx (~260 MB). Works.
-    //   XLM-RoBERTa backbone is 100-language and handles Dutch fine.
-    onProgress('Reranker laden (bge-reranker-base, browser-compatible)...', 25);
-    const rerankModelId = 'Xenova/bge-reranker-base';
-    State.tjsRerankTokenizer = await AutoTokenizer.from_pretrained(rerankModelId, {
-        progress_callback: (x) => {
-            if (x.status === 'progress') {
-                onProgress(`Reranker tokenizer: ${x.file || ''} ${Math.round(x.progress || 0)}%`, 26);
-            }
-        }
-    });
-    State.tjsRerankModel = await AutoModelForSequenceClassification.from_pretrained(rerankModelId, {
-        device: embedDevice,
-        dtype: 'q8',
-        progress_callback: (x) => {
-            if (x.status === 'progress') {
-                const pct = 27 + (x.progress || 0) * 0.18;
-                onProgress(`Reranker model: ${x.file || ''} ${Math.round(x.progress || 0)}%`, pct);
-            }
-        }
-    });
-
-    // ── STEP 3: Granite 4.0 Micro LLM ─────────────────────────────────────────
-    onProgress('LLM laden: granite-4.0-micro...', 50);
-    const llmModelId = 'onnx-community/granite-4.0-micro-ONNX-web';
-    State.tjsLLMPipeline = await pipeline(
-        'text-generation',
-        llmModelId,
-        {
-            device: (typeof navigator.gpu !== 'undefined') ? 'webgpu' : 'wasm',
-            progress_callback: (x) => {
-                if (x.status === 'progress') {
-                    const pct = 50 + (x.progress || 0) * 0.50;
-                    onProgress(`LLM: ${Math.round(x.progress || 0)}%`, pct);
-                }
-            }
-        }
-    );
-
-    onProgress('Klaar!', 100);
-}
-
-async function embedText_TJS(text, role = 'document') {
-    const prefix = role === 'query' ? 'search_query: ' : 'search_document: ';
-    const fullText = prefix + text;
-
-    const text_inputs = State.tjsTokenizer(fullText, {
-        padding: true,
-        truncation: true,
-        max_length: 512
-    });
-
-    const { last_hidden_state } = await State.tjsEmbedModel(text_inputs);
-
-    let textEmbeddings = State.tjsMath.mean_pooling(
-        last_hidden_state, 
-        text_inputs.attention_mask
-    );
-    textEmbeddings = State.tjsMath.layer_norm(textEmbeddings, [textEmbeddings.dims[1]]);
-    textEmbeddings = textEmbeddings.normalize(2, -1);
-
-    return textEmbeddings.tolist()[0];
-}
-
-// Pass 1: JSON decision — compact, no streaming, tight budget so model can't spiral
-async function inferJSON(messages) {
-    const result = await State.tjsLLMPipeline(messages, {
-        max_new_tokens: 400,
-        do_sample: false,
-        repetition_penalty: 1.1,
-    });
-    const generated = result[0].generated_text;
-    if (Array.isArray(generated)) return generated.at(-1).content ?? '';
-    return typeof generated === 'string' ? generated : JSON.stringify(generated);
-}
-
-// Pass 2: streamed markdown reply — tokens emitted live into a DOM element via onChunk
-async function inferStream(messages, onChunk) {
-    const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer, {
-        skip_prompt: true,
-        skip_special_tokens: true,
-        callback_function: (text) => { if (onChunk) onChunk(text); }
-    });
-    const result = await State.tjsLLMPipeline(messages, {
-        max_new_tokens: 1024,
-        do_sample: false,
-        repetition_penalty: 1.15,
-        streamer
-    });
-    const generated = result[0].generated_text;
-    if (Array.isArray(generated)) return generated.at(-1).content ?? '';
-    return typeof generated === 'string' ? generated : JSON.stringify(generated);
-}
-
-document.getElementById('btn-tjs-load').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-tjs-load');
-    btn.disabled = true;
-    document.getElementById('tjs-model-progress').style.display = 'block';
-
-    const progText = document.getElementById('tjs-prog-text');
-    const progFill = document.getElementById('tjs-prog-fill');
-
-    try {
-        await loadTransformersBackend((msg, pct) => {
-            progText.textContent = msg;
-            progFill.style.width = `${Math.round(pct)}%`;
-        });
-        progText.textContent = '✓ Modellen geladen en gecached';
-        document.getElementById('tjs-file-section').style.display = 'block';
-    } catch (e) {
-        console.error(e);
-        progText.textContent = `Fout: ${e.message}. Controleer console.`;
-        btn.disabled = false;
-    }
-});
-
-document.getElementById('btn-tjs-start').addEventListener('click', async () => {
-    const files = document.getElementById('cfg-files-tjs').files;
-    if (files.length === 0) return alert("Selecteer minstens één markdown bestand.");
-    document.getElementById('btn-tjs-start').style.display = 'none';
-    document.getElementById('box-tjs').style.display = 'none';
-    document.getElementById('tjs-model-progress').style.display = 'none';
-    await initAndStart(files);
-});
-
-function chunkMarkdown(text, filename) {
-    if (typeof marked === 'undefined' || !marked.lexer) {
-        return text.split(/\n\s*\n/).filter(c => c.trim().length > 20).map((t, i) => ({
-            id: `${filename}_${i}`,
-            text: t.trim()
-        }));
-    }
-
-    const tokens = marked.lexer(text);
-    const chunks = [];
-    let chunkIdx = 0;
-    const headingStack = ['', '', ''];
-    let currentBodyTokens = [];  
-    const MAX_CHUNK_CHARS = 1400;
-
-    function flushChunk() {
-        const bodyText = currentBodyTokens.map(t => t.raw || '').join('').trim();
-        if (bodyText.length < 20) {
-            currentBodyTokens = [];
-            return;
-        }
-
-        const breadcrumb = headingStack
-            .map((h, i) => h.length > 0 ? `${'#'.repeat(i + 1)} ${h}` : null)
-            .filter(line => line !== null)
-            .join('\n');
-
-        const fullText = breadcrumb.length > 0
-            ? `${breadcrumb}\n\n${bodyText}`
-            : bodyText;
-
-        chunks.push({
-            id: `${filename}_${chunkIdx++}`,
-            text: fullText
-        });
-
-        currentBodyTokens = [];
-    }
-
-    for (const token of tokens) {
-        if (token.type === 'heading') {
-            const depth = token.depth;
-            if (depth <= 3) {
-                if (currentBodyTokens.length > 0) flushChunk();
-                headingStack[depth - 1] = token.text || '';
-                for (let d = depth; d < 3; d++) headingStack[d] = '';
-            } else {
-                currentBodyTokens.push(token);
-            }
-        } else {
-            // Safety split: any single token > 1200 chars is sliced into overlapping
-            // pieces so the embedding model never sees a giant sequence.
-            const raw = token.raw || '';
-            if (raw.length > 1200) {
-                const SLICE = 1000, OVERLAP = 200;
-                for (let s = 0; s < raw.length; s += SLICE - OVERLAP) {
-                    const sliceText = raw.slice(s, s + SLICE);
-                    currentBodyTokens.push({ ...token, raw: sliceText, text: sliceText });
-                    const accumulatedLength = currentBodyTokens
-                        .map(t => (t.raw || '').length)
-                        .reduce((a, b) => a + b, 0);
-                    if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
-                }
-            } else {
-                currentBodyTokens.push(token);
-                const accumulatedLength = currentBodyTokens
-                    .map(t => (t.raw || '').length)
-                    .reduce((a, b) => a + b, 0);
-
-                if (accumulatedLength > MAX_CHUNK_CHARS) flushChunk();
-            }
-        }
-    }
-
-    flushChunk();
-    if (chunks.length === 0 && text.trim().length > 0) {
-        chunks.push({ id: `${filename}_0`, text: text.trim() });
-    }
-
-    return chunks;
-}
-
-function renderDocumentPane(filename, text) {
-    const container = document.getElementById('docs-container');
-    const frame = document.createElement('div');
-    frame.className = 'doc-frame';
-    frame.id = `frame-${filename}`;
-    
-    const title = document.createElement('div');
-    title.className = 'doc-title';
-    title.textContent = filename;
-    
-    const content = document.createElement('div');
-    content.className = 'doc-content';
-    content.id = `content-${filename}`;
-    
-    const structuredChunks = chunkMarkdown(text, filename);
-    
-    structuredChunks.forEach((chunk) => {
-        const chunkDiv = document.createElement('div');
-        chunkDiv.id = chunk.id;
-        chunkDiv.className = 'chunk-block';
-        chunkDiv.innerHTML = marked.parse(chunk.text);
-        content.appendChild(chunkDiv);
-    });
-    
-    frame.appendChild(title);
-    frame.appendChild(content);
-    container.appendChild(frame);
-}
-
-function updateStatePane(newStateObj) {
-    if (newStateObj) {
-        // Intent: keep history as a stack, not just the last value
-        if (newStateObj.intent && newStateObj.intent !== State.jsonState.intent) {
-            if (!State.jsonState.intent_history) State.jsonState.intent_history = [];
-            if (State.jsonState.intent && State.jsonState.intent !== 'Onbekend') {
-                State.jsonState.intent_history.push(State.jsonState.intent);
-            }
-            State.jsonState.intent = newStateObj.intent;
-        }
-        // facts_gathered: accumulate unique facts across all turns
-        if (Array.isArray(newStateObj.facts_gathered)) {
-            if (!Array.isArray(State.jsonState.facts_gathered)) State.jsonState.facts_gathered = [];
-            newStateObj.facts_gathered.forEach(f => {
-                if (f && !State.jsonState.facts_gathered.includes(f)) {
-                    State.jsonState.facts_gathered.push(f);
-                }
-            });
-        }
-
-	// user_facts: accumulate facts stated by the user across turns
-        if (Array.isArray(newStateObj.user_facts)) {
-            if (!Array.isArray(State.jsonState.user_facts)) State.jsonState.user_facts = [];
-            newStateObj.user_facts.forEach(f => {
-                if (f && !State.jsonState.user_facts.includes(f)) {
-                    State.jsonState.user_facts.push(f);
-                }
-            });
-        }
-        // Generic decision tracking (domain-agnostic replacement for hardcoded 'spoor')
-        if (newStateObj.decision !== undefined) {
-            if (!State.jsonState.decision_history) State.jsonState.decision_history = [];
-            if (State.jsonState.current_decision) State.jsonState.decision_history.push(State.jsonState.current_decision);
-            State.jsonState.current_decision = newStateObj.decision;
-        }
-        // Any other fields: plain merge
-        const skip = new Set(['intent', 'facts_gathered', 'user_facts', 'decision']);
-        Object.keys(newStateObj).forEach(k => {
-            if (!skip.has(k)) State.jsonState[k] = newStateObj[k];
-        });
-    }
-    document.getElementById('state-content').textContent = JSON.stringify(State.jsonState, null, 2);
-}
-
-// Shared chip builder — used by addMessage and by streaming bubble finalize
-function buildChipContainer(citations) {
-    const chipContainer = document.createElement('div');
-    chipContainer.style.marginTop = '8px';
-    citations.forEach(cit => {
-        if (!cit.document) return;
-        const c = document.createElement('span');
-        c.className = 'citation-chip';
-        const chunkSuffix = cit.chunkId ? ` #${cit.chunkId.split('_').at(-1)}` : '';
-        c.textContent = `📍 ${cit.document}${chunkSuffix}`;
-        c.title = cit.chunkId || 'Bronbestand';
-        c.onclick = () => {
-            if (c.classList.contains('chip-active')) {
-                c.classList.remove('chip-active');
-                clearHighlights();
-            } else {
-                chipContainer.querySelectorAll('.chip-active').forEach(el => el.classList.remove('chip-active'));
-                c.classList.add('chip-active');
-                clearHighlights();
-                if (cit.chunkId) highlightAndScroll(cit.document, cit.chunkId);
-            }
-        };
-        chipContainer.appendChild(c);
-    });
-    return chipContainer;
-}
-
-function addMessage(role, text, citations = []) {
-    const history = document.getElementById('chat-history');
-    const d = document.createElement('div');
-    d.className = `msg ${role}`;
-
-    if (role === 'bot' && typeof marked !== 'undefined') {
-        const body = document.createElement('div');
-        body.className = 'md-body';
-        body.innerHTML = marked.parse(text);
-        d.appendChild(body);
-    } else {
-        d.textContent = text;
-    }
-
-    if (citations.length > 0) d.appendChild(buildChipContainer(citations));
-    history.appendChild(d);
-    history.scrollTop = history.scrollHeight;
-    return d;
-}
-
-// Returns a live streaming bubble handle.
-// .append(chunk) — add a text fragment, re-render markdown incrementally
-// .finalize(citations) — remove cursor, attach chips, return full accumulated text
-// parent: optional DOM element to append to (default: #chat-history)
-function createStreamingBubble(parent = null) {
-    const history = document.getElementById('chat-history');
-    const container = parent || history;
-    const d = document.createElement('div');
-    d.className = parent ? 'md-body streaming-cursor' : 'msg bot';
-    if (!parent) {
-        const body = document.createElement('div');
-        body.className = 'md-body streaming-cursor';
-        d.appendChild(body);
-        container.appendChild(d);
-        history.scrollTop = history.scrollHeight;
-        // Delegate to inner body
-        let accumulated = '';
-        const body2 = body;
-        return {
-            el: d,
-            append(chunk) {
-                accumulated += chunk;
-                body2.innerHTML = typeof marked !== 'undefined' ? marked.parse(accumulated) : accumulated.replace(/\n/g, '<br>');
-                history.scrollTop = history.scrollHeight;
-            },
-            finalize(citations = []) {
-                body2.classList.remove('streaming-cursor');
-                body2.innerHTML = typeof marked !== 'undefined' ? marked.parse(accumulated) : accumulated.replace(/\n/g, '<br>');
-                if (citations.length > 0) d.appendChild(buildChipContainer(citations));
-                history.scrollTop = history.scrollHeight;
-                return accumulated;
-            }
-        };
-    }
-    // When parent provided (thinking block): d IS the body, append directly
-    d.className = 'md-body streaming-cursor';
-    container.appendChild(d);
-    history.scrollTop = history.scrollHeight;
-
-    let accumulated = '';
-    return {
-        el: d,
-        append(chunk) {
-            accumulated += chunk;
-            d.innerHTML = typeof marked !== 'undefined'
-                ? marked.parse(accumulated)
-                : accumulated.replace(/\n/g, '<br>');
-            history.scrollTop = history.scrollHeight;
-        },
-        finalize(citations = []) {
-            d.classList.remove('streaming-cursor');
-            d.innerHTML = typeof marked !== 'undefined'
-                ? marked.parse(accumulated)
-                : accumulated.replace(/\n/g, '<br>');
-            // Citations go on the parent wrapper, not the body div
-            if (citations.length > 0) container.appendChild(buildChipContainer(citations));
-            history.scrollTop = history.scrollHeight;
-            return accumulated;
-        }
-    };
-}
-
-async function buildEmbeddings(filename, text) {
-    const structuredChunks = chunkMarkdown(text, filename);
-    const pText = document.getElementById('progress-text');
-    const pFill = document.getElementById('progress-fill');
-    
-    for(let i = 0; i < structuredChunks.length; i++) {
-        pText.textContent = `Vectoriseren... (${filename} — chunk ${i+1}/${structuredChunks.length})`;
-        pFill.style.width = `${Math.round((i / structuredChunks.length) * 100)}%`;
-        
-        try {
-            let vector;
-            const textToEmbed = structuredChunks[i].text;
-
-            if (State.backend === 'transformers') {
-                vector = await embedText_TJS(textToEmbed, 'document');
-            } else {
-                const isNomic = State.embedModel.toLowerCase().includes('nomic');
-                const inputText = isNomic ? `search_document: ${textToEmbed}` : textToEmbed;
-                const res = await fetch(`${State.url}/v1/embeddings`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: State.embedModel, input: inputText })
-                });
-                const data = await res.json();
-                vector = data.data[0].embedding;
-            }
-            State.chunks.push({
-                id: structuredChunks[i].id,
-                docName: filename,
-                text: structuredChunks[i].text,
-                vector
-            });
-        } catch (e) {
-            console.error("Embedding fail", e);
-            alert(`Embedding failed on chunk ${i+1} of ${structuredChunks.length}.\n\n` +
-                  `This usually happens when a text chunk is too large for the browser GPU.\n` +
-                  `Try splitting the document into smaller sections, or use the LM Studio backend.\n\n` +
-                  `Error: ${e.message}`);
-            throw e;
-        }
-    }
-}
-
-function headingBoostScore(chunk, queryTerms) {
-    const h1h2Lines = chunk.text
-        .split('\n')
-        .filter(l => /^#{1,2}\s/.test(l.trimStart()))
-        .join(' ')
-        .toLowerCase();
-
-    if (h1h2Lines.length === 0) return 1.0;
-
-    let matchCount = 0;
-    for (const term of queryTerms) {
-        if (term.length >= 2 && h1h2Lines.includes(term)) matchCount++;
-    }
-    return Math.min(1.8, 1.0 + matchCount * 0.20);
-}
-
-function tokenizeQuery(query) {
-    return query.toLowerCase().match(/[\wÀ-ÿ]{2,}/g) || [];
-}
-
-function cosineSimilarity(vecA, vecB) {
-    let dot = 0, nA = 0, nB = 0;
-    for(let i=0; i<vecA.length; i++) {
-        dot += vecA[i] * vecB[i];
-        nA += vecA[i] * vecA[i];
-        nB += vecB[i] * vecB[i];
-    }
-    return dot / (Math.sqrt(nA) * Math.sqrt(nB));
-}
-
-// Hulpfunctie voor keyword matching (BM25-light)
-function calculateKeywordScore(text, queryTerms) {
-    const textLower = text.toLowerCase();
-    let matches = 0;
-    queryTerms.forEach(term => {
-        if (textLower.includes(term)) matches++;
-    });
-    return queryTerms.length > 0 ? (matches / queryTerms.length) : 0;
-}
-
-
-
-async function searchVectors(query, finalTopK = 5, onPhase = null) {
-    const queryTerms = tokenizeQuery(query);
-    if (onPhase) onPhase('embed');
-    const qVec = await (State.backend === 'transformers' ? embedText_TJS(query, 'query') : await getEmbeddingsFromAPI(query));
-
-    // 1. Hybride Scoring
-    if (onPhase) onPhase('hybrid');
-    const scored = State.chunks.map(chunk => {
-        const semanticScore = cosineSimilarity(qVec, chunk.vector);
-        const keywordScore = calculateKeywordScore(chunk.text, queryTerms);
-        return { ...chunk, score: (semanticScore * 0.7) + (keywordScore * 0.3) };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    let candidates = scored.slice(0, 12);
-
-    if (State.backend === 'transformers' && State.tjsRerankModel && State.tjsRerankTokenizer) {
-        try {
-            if (onPhase) onPhase('rerank');
-            const sigmoid = x => 1 / (1 + Math.exp(-x));
-
-            const queries = candidates.map(() => query);
-            const passages = candidates.map(c => c.text);
-
-            const inputs = State.tjsRerankTokenizer(queries, {
-                text_pair: passages,
-                padding: true,
-                truncation: true,
-                max_length: 512
-            });
-
-            const { logits } = await State.tjsRerankModel(inputs);
-            // logits.data is a flat Float32Array: one logit per candidate
-            const rawScores = Array.from(logits.data);
-
-            candidates = candidates.map((chunk, i) => ({
-                ...chunk,
-                score: sigmoid(rawScores[i])
-            }));
-
-            candidates.sort((a, b) => b.score - a.score);
-            console.log("Reranked Top 3 scores:", candidates.slice(0, 3).map(c => c.score.toFixed(4)));
-        } catch(e) {
-            console.error("Reranker faalde:", e);
-        }
-    }
-    return candidates.slice(0, finalTopK);
-}
-
-function clearHighlights() {
-    document.querySelectorAll('mark.ai-hl').forEach(el => {
-        const parent = el.parentNode;
-        if(parent) {
-            parent.replaceChild(document.createTextNode(el.textContent), el);
-            parent.normalize();
-        }
-    });
-    document.querySelectorAll('.chunk-block').forEach(el => {
-        el.style.backgroundColor = '';
-    });
-}
-
-function highlightAndScroll(docName, chunkId) {
-    const targetEl = document.getElementById(chunkId);
-    if (!targetEl) return;
-    targetEl.style.backgroundColor = "var(--hl)";
-    const docContent = targetEl.closest('.doc-content');
-    if (docContent) {
-        const elTop = targetEl.getBoundingClientRect().top;
-        const containerTop = docContent.getBoundingClientRect().top;
-        const centerOffset = docContent.scrollTop + (elTop - containerTop) - (docContent.clientHeight / 2) + (targetEl.clientHeight / 2);
-        docContent.scrollTo({ top: Math.max(0, centerOffset), behavior: 'smooth' });
-    }
-}
-
-function extractJSON(rawText) {
-    let text = rawText.trim()
-        .replace(/^`{3}(?:json)?\s*/i, '')
-        .replace(/\s*`{3}\s*$/, '');
-
-    // Helper: normalize top-level fields into state_update
-    function normalize(obj) {
-        if (!obj) return obj;
-        if (!obj.state_update) obj.state_update = {};
-        if (obj.intent && !obj.state_update.intent) obj.state_update.intent = obj.intent;
-        if (obj.user_facts && !obj.state_update.user_facts) obj.state_update.user_facts = obj.user_facts;
-        if (obj.facts_gathered && !obj.state_update.facts_gathered) obj.state_update.facts_gathered = obj.facts_gathered;
-        return obj;
-    }
-
-    // Try direct parse
-    try { return normalize(JSON.parse(text)); } catch(e) {}
-
-    // Extract first {...} block
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) {
-        // Fallback: handle "Decision: {...} Facts: [...]" prose format
-        const decisionM = text.match(/Decision:\s*(\{[\s\S]*?\})/);
-        const factsM = text.match(/Facts:\s*(\[[\s\S]*?\])/);
-        if (decisionM) {
-            try {
-                const obj = JSON.parse(decisionM[1]);
-                if (factsM) {
-                    try { obj.citations = JSON.parse(factsM[1]); } catch(e2) {}
-                }
-                return normalize(obj);
-            } catch(e) {}
-        }
-        return null;
-    }
-
-    const block = m[0];
-    try { return normalize(JSON.parse(block)); } catch(e) {}
-
-    // Manual field extraction fallback
-    try {
-        const obj = {};
-
-        const decM = block.match(/"decision"\s*:\s*"([^"]*?)"/);
-        if (decM) obj.decision = decM[1];
-
-        const suM = block.match(/"state_update"\s*:\s*(\{[\s\S]*?\})\s*,\s*"/);
-        if (suM) { 
-            try { obj.state_update = JSON.parse(suM[1]); } catch(e2) {} 
-        }
-
-        const citM = block.match(/"citations"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
-        if (citM) { 
-            try { obj.citations = JSON.parse(citM[1]); } catch(e2) {} 
-        }
-
-        if (!obj.state_update) obj.state_update = {};
-        const intentM = block.match(/"intent"\s*:\s*"([^"]*?)"/);
-        if (intentM && !obj.state_update.intent) obj.state_update.intent = intentM[1];
-
-        const ufM = block.match(/"user_facts"\s*:\s*(\[[\s\S]*?\])/);
-        if (ufM && !obj.state_update.user_facts) {
-            try { obj.state_update.user_facts = JSON.parse(ufM[1]); } catch(e2) {}
-        }
-
-        const fgM = block.match(/"facts_gathered"\s*:\s*(\[[\s\S]*?\])/);
-        if (fgM && !obj.state_update.facts_gathered) {
-            try { obj.state_update.facts_gathered = JSON.parse(fgM[1]); } catch(e2) {}
-        }
-
-        if (obj.decision || obj.state_update?.intent || obj.citations) return normalize(obj);
-    } catch(e) {}
-
-    return null;
-}
-
-// Detect likely language of a short text for pass 2/3 instruction.
-// Uses common function words — sufficient for Dutch vs English at this scale.
-function detectLanguage(text) {
-    const t = text.toLowerCase();
-    const nlWords = ['de', 'het', 'een', 'is', 'van', 'in', 'dat', 'zijn', 'op', 'aan',
-                     'als', 'er', 'maar', 'wat', 'niet', 'voor', 'met', 'ook', 'dan',
-                     'ik', 'je', 'ze', 'we', 'dit', 'die', 'door', 'heeft', 'wordt'];
-    const tokens = t.split(/\s+/);
-    const nlCount = tokens.filter(w => nlWords.includes(w.replace(/[^a-z]/g, ''))).length;
-    const ratio = nlCount / Math.max(tokens.length, 1);
-    if (ratio > 0.12) return 'Dutch';
-    return 'English'; // default — model will usually match user anyway
-}
-
-document.getElementById('new-search-btn').addEventListener('click', () => {
-    State.forceNewSearch = true;
-    State.lastChunks = null;
-    const btn = document.getElementById('new-search-btn');
-    btn.style.background = 'var(--primary)';
-    setTimeout(() => { btn.style.background = '#888'; }, 800);
-});
-
-document.getElementById('send-btn').addEventListener('click', async () => {
-    const inputEl = document.getElementById('chat-input');
-    const text = inputEl.value.trim();
-    if (!text) return;
-
-    inputEl.value = '';
-    addMessage('user', text);
-    clearHighlights();
-    document.getElementById('send-btn').disabled = true;
-
-    const chatHistory = document.getElementById('chat-history');
-    const isTJS = State.backend === 'transformers';
-    const userLang = detectLanguage(text); // 'Dutch' or 'English'
-    const langInstruction = `Respond in ${userLang}. Match the language of the user's question exactly.`;
-
-    // ── Retrieval phase indicator ────────────────────────────────────────────
-    const placeholder = document.createElement('div');
-    placeholder.className = 'msg bot streaming';
-    placeholder.textContent = '🔍 Vraag inbedden...';
-    chatHistory.appendChild(placeholder);
-    chatHistory.scrollTop = chatHistory.scrollHeight;
-
-    let rerankTimer = null;
-    const onPhase = (phase) => {
-        if (phase === 'embed')  placeholder.textContent = '🔍 Vraag inbedden...';
-        if (phase === 'hybrid') placeholder.textContent = '🔍 Hybride retrieval (vector + keyword)...';
-        if (phase === 'rerank') {
-            placeholder.textContent = '⚖️ Reranking (cross-encoder)...';
-            const t0 = Date.now();
-            rerankTimer = setInterval(() => {
-                placeholder.textContent = `⚖️ Reranking... ${((Date.now()-t0)/1000).toFixed(1)}s`;
-                chatHistory.scrollTop = chatHistory.scrollHeight;
-            }, 400);
-        }
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-    };
-
-    // Use cached chunks for follow-ups unless user explicitly requested new search.
-    // A follow-up is detected when: there are prior turns AND forceNewSearch is false.
-    const hasPriorTurns = State.chatHistory.length > 1; // system + at least one Q&A
-    const useCache = hasPriorTurns && State.lastChunks && !State.forceNewSearch;
-    State.forceNewSearch = false; // reset after each turn
-
-    let relevantChunks;
-    if (useCache) {
-        relevantChunks = State.lastChunks;
-        placeholder.textContent = '♻️ Vorige zoekresultaten hergebruikt';
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-        if (rerankTimer) clearInterval(rerankTimer);
-    } else {
-        relevantChunks = await searchVectors(text, 5, onPhase);
-        if (rerankTimer) clearInterval(rerankTimer);
-        State.lastChunks = relevantChunks;
-    }
-
-    console.log(`[RAG] ${useCache ? 'CACHED' : 'FRESH'} Top 5:`, relevantChunks.map(c => ({
-        id: c.id, score: c.score?.toFixed(3),
-        preview: c.text.split('\n').slice(0, 2).join(' | ')
-    })));
-
-    // ── Build context string ─────────────────────────────────────────────────
-    let contextString = "CONTEXT:\n";
-    relevantChunks.forEach(c => {
-        contextString += `[Doc: ${c.docName}, ChunkId: ${c.id}]\n${c.text}\n\n`;
-    });
-
-    try {
-        // ════════════════════════════════════════════════════════════════════
-        // PASS 1 — JSON decision (compact, no streaming)
-        // System prompt asks for: spoor/decision + citations + state_update.
-        // Token budget is tight (400) so the model must commit, not spiral.
-        // ════════════════════════════════════════════════════════════════════
-        placeholder.textContent = '🧠 Beslissing nemen (pass 1)...';
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-
-        const pass1Messages = [
-            ...State.chatHistory,
-            { role: 'user', content: `${contextString}\nQuestion: ${text}` }
-        ];
-
-        let pass1Raw, parsed;
-        if (isTJS) {
-            pass1Raw = await inferJSON(pass1Messages);
-        } else {
-            const res = await fetch(`${State.url}/v1/chat/completions`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: State.chatModel,
-                    messages: pass1Messages,
-                    temperature: 0.0,
-                    max_tokens: 400,
-                    repetition_penalty: 1.1
-                })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error?.message || `API error: ${res.status}`);
-            pass1Raw = data.choices[0].message.content;
-        }
-
-        console.log('[Pass 1 raw]', pass1Raw);
-        parsed = extractJSON(pass1Raw);
-
-        // Update state pane and document highlights from pass-1 JSON
-        if (parsed) {
-            if (parsed.state_update) updateStatePane(parsed.state_update);
-            if (parsed.citations?.length) {
-                clearHighlights();
-                parsed.citations.forEach(c => {
-                    if (c.chunkId) highlightAndScroll(c.document, c.chunkId);
-                });
-            }
-        } else {
-            // Pass 1 failed to produce JSON — fall back: show raw and stop
-            placeholder.remove();
-            addMessage('bot', `⚠️ Pass 1 returned no valid JSON.\n\n${pass1Raw}`);
-            document.getElementById('send-btn').disabled = false;
-            return;
-        }
-
-        // ════════════════════════════════════════════════════════════════════
-        // PASS 2 — Streamed markdown reply
-        // Uses pass-1 decision as grounding. Streams live into the bubble.
-        // Register: practical, actionable, same language as the user's question.
-        // The system prompt here is intentionally minimal — no domain hardcoding.
-        // ════════════════════════════════════════════════════════════════════
-        placeholder.remove();
-
-        // Pass 2 is "thinking" — render in a collapsible details block, smaller font
-        const thinkingWrapper = document.createElement('details');
-        thinkingWrapper.className = 'msg bot thinking-block';
-        thinkingWrapper.style.cssText = 'font-size:0.82rem; color:#555; background:#f8f8f8; border-color:#ddd;';
-        const thinkingSummary = document.createElement('summary');
-        thinkingSummary.style.cssText = 'cursor:pointer; font-size:0.8rem; color:#888; user-select:none; padding:0.3rem 0;';
-        thinkingSummary.textContent = '🧠 Redenering (klik om te tonen/verbergen)';
-        thinkingWrapper.appendChild(thinkingSummary);
-        document.getElementById('chat-history').appendChild(thinkingWrapper);
-
-        const bubble = createStreamingBubble(thinkingWrapper);
-
-        const decisionSummary = parsed.decision
-            ? `Decision: ${parsed.decision}`
-            : `Analysis: ${JSON.stringify(parsed.state_update || {})}`;
-
-        const pass2System = `You are a practical assistant. Write a clear, actionable answer based on the decision and context provided. ${langInstruction} Use markdown formatting: bullet lists for steps, bold for key terms. Be concise and avoid legalese. Do not repeat the decision verbatim — explain what it means in practice and what the user should do next.`;
-
-        const pass2Messages = [
-            { role: 'system', content: pass2System },
-            { role: 'user',   content: `${decisionSummary}\n\nContext used:\n${contextString}\n\nUser question: ${text}\n\nWrite a practical markdown answer:` }
-        ];
-
-        if (isTJS) {
-            await inferStream(pass2Messages, (chunk) => bubble.append(chunk));
-        } else {
-            // LM Studio: no streaming in this setup — single fetch, then finalize
-            placeholder.textContent = '✍️ Antwoord opstellen (pass 2)...';
-            chatHistory.appendChild(placeholder);
-            const res2 = await fetch(`${State.url}/v1/chat/completions`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: State.chatModel,
-                    messages: pass2Messages,
-                    temperature: 0.2,
-                    max_tokens: 1024,
-                    repetition_penalty: 1.15
-                })
-            });
-            const data2 = await res2.json();
-            if (!res2.ok) throw new Error(data2.error?.message || `API error: ${res2.status}`);
-            placeholder.remove();
-            bubble.append(data2.choices[0].message.content);
-        }
-
-        // ════════════════════════════════════════════════════════════════════
-        // PASS 3 — Conversational reformulation + follow-up questions
-        // Compresses pass-2 into ≤3 sentences + 2 grounded follow-up questions.
-        // Uses accumulated intent graph so follow-ups build on prior context.
-        // Non-streaming (short output), appended below the streaming bubble.
-        // ════════════════════════════════════════════════════════════════════
-        const replyText = bubble.finalize(parsed.citations || []);
-
-        // Build intent context from accumulated state for grounded follow-ups
-        const accumulatedFacts = (State.jsonState.facts_gathered || []).join('; ') || 'none yet';
-        const intentHistory = (State.jsonState.intent_history || []);
-        const intentCtx = intentHistory.length
-            ? `Prior intents: ${intentHistory.join(' → ')} → ${State.jsonState.intent}`
-            : `Current intent: ${State.jsonState.intent || 'unknown'}`;
-
-        const pass3System = `You are a concise advisor. Compress the provided draft answer and add follow-up questions.
-Output format (use exact structure):
-[SHORT ANSWER]
-2-3 sentences max. ${langInstruction} No bullet lists. No headers. No legalese.
-
-[FOLLOW-UP]
-Exactly 2 short questions (one per line, starting with >) that would help clarify or advance the user's intent.
-Base the questions on the accumulated context and what is still unclear or unresolved.
-The questions must also be in ${userLang}.`;
-
-        const pass3User = `User question: ${text}
-
-Accumulated context:
-- ${intentCtx}
-- Known facts: ${accumulatedFacts}
-- Current decision: ${State.jsonState.current_decision || 'see state'}
-
-Draft answer to compress:
-${replyText}
-
-Rewrite as short answer + 2 follow-up questions:`;
-
-        const pass3Messages = [
-            { role: 'system', content: pass3System },
-            { role: 'user',   content: pass3User }
-        ];
-
-        let pass3Text = '';
-        try {
-            if (isTJS) {
-                pass3Text = await inferJSON(pass3Messages);  // inferJSON: no stream, 400 tokens max
-            } else {
-                const res3 = await fetch(`${State.url}/v1/chat/completions`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        model: State.chatModel,
-                        messages: pass3Messages,
-                        temperature: 0.3,
-                        max_tokens: 300,
-                        repetition_penalty: 1.1
-                    })
-                });
-                const data3 = await res3.json();
-                if (res3.ok) pass3Text = data3.choices[0].message.content;
-            }
-        } catch(e3) {
-            console.warn('Pass 3 failed, skipping:', e3);
-        }
-
-        // Append pass-3 output as a separate styled block below the streaming bubble
-        if (pass3Text.trim()) {
-            const p3el = document.createElement('div');
-            p3el.className = 'msg bot pass3-block';
-            const p3body = document.createElement('div');
-            p3body.className = 'md-body';
-            // Parse [SHORT ANSWER] and [FOLLOW-UP] sections into clean markdown
-            const p3md = pass3Text
-                .replace(/\[SHORT ANSWER\]/gi, '')
-                .replace(/\[FOLLOW-UP\]/gi, '\n\n---\n\n**Mogelijke vervolgvragen:**\n\n')
-                .trim();
-            p3body.innerHTML = typeof marked !== 'undefined' ? marked.parse(p3md) : p3md;
-            p3el.appendChild(p3body);
-            // Make follow-up lines clickable to auto-send
-            p3el.querySelectorAll('blockquote p, blockquote').forEach(el => {
-                const q = el.textContent.trim().replace(/^>\s*/, '');
-                if (q.length > 5) {
-                    el.style.cursor = 'pointer';
-                    el.title = 'Klik om deze vraag te stellen';
-                    el.addEventListener('click', () => {
-                        document.getElementById('chat-input').value = q;
-                        document.getElementById('send-btn').click();
-                    });
-                }
-            });
-            document.getElementById('chat-history').appendChild(p3el);
-            document.getElementById('chat-history').scrollTop = document.getElementById('chat-history').scrollHeight;
-        }
-
-        // ── Update conversation history
-        // Store compact decision only — NOT full reply prose.
-        // Full reply in history bloats the context window and causes pass 1
-        // JSON failures on follow-ups (model runs out of budget before closing JSON).
-        const compactAssistant = JSON.stringify({
-    decision: parsed.decision || '',
-    state_update: {
-        intent: parsed.state_update?.intent || '',
-        user_facts: parsed.state_update?.user_facts || [],
-        facts_gathered: (parsed.state_update?.facts_gathered || []).slice(0, 3)
-    },
-    citations: (parsed.citations || []).slice(0, 2)
-});
-        State.chatHistory.push({ role: 'user', content: text });
-        State.chatHistory.push({ role: 'assistant', content: compactAssistant });
-
-        const MAX_TURNS = 8;
-        const sysMsg = State.chatHistory[0];
-        const qa = State.chatHistory.slice(1);
-        if (qa.length > MAX_TURNS * 2) State.chatHistory = [sysMsg, ...qa.slice(-(MAX_TURNS * 2))];
-
-    } catch (e) {
-        placeholder.remove();
-        addMessage('bot', `System error: ${e.message}`);
-        console.error(e);
-    }
-
-    document.getElementById('send-btn').disabled = false;
-});
-
-document.getElementById('chat-input').addEventListener('keydown', e => {
-    if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('send-btn').click(); }
-});
-
-async function nukeTjsCache() {
-    if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
-    }
-    localStorage.clear();
-    console.log('Cache cleared. Reload the page to re-download from CDN.');
-}
-</script>
-
-<div id="md-hint" popover style="padding:1rem; max-width:320px; font-size:0.85rem; border:1px solid #ccc; border-radius:6px; background:white;">
+<!-- Markdown quality hint (native Popover API) ─────────────────────────── -->
+<div id="md-hint" popover>
   <strong>Goede Markdown voor slimme chunking:</strong><br><br>
   ✅ Gebruik koppen (# ## ###) voor elk onderwerp<br>
   ✅ Één onderwerp per sectie<br>
@@ -1310,5 +290,1238 @@ async function nukeTjsCache() {
   ❌ Geen diep geneste lijsten (3+ niveaus)<br>
   ❌ Geen doorlopende tekst over meerdere onderwerpen
 </div>
+
+
+<script>
+/* =========================================================================
+ * Fietsbel CE — Deterministic RAG Chat
+ *
+ * External files (place next to index.html):
+ *   marked.min.js        required  — markdown parser
+ *   transformers.min.js  optional  — loaded on demand (ES import) for Browser AI
+ *   mermaid.min.js       optional  — diagram rendering in document panes
+ *
+ * Architecture:
+ *   Config     — tuneable constants, single source of truth for all magic numbers
+ *   State      — mutable session state; all backend handles live here
+ *   Chunker    — markdown → semantically-aware chunks with heading breadcrumbs
+ *   Backends   — unified embed / rerank / infer façade
+ *                  ._tjs  : Transformers.js (browser AI) adapter
+ *                  ._api  : OpenAI-compatible API adapter (LM Studio + llama.cpp)
+ *   Retrieval  — hybrid vector+keyword scoring, heading boost, optional rerank
+ *   UI         — DOM helpers: messages, chips, highlights, streaming bubbles
+ *   NLP        — language detection, robust JSON extraction
+ *   Pipeline   — three-pass RAG: JSON decision → streaming reply → compression
+ *   Setup      — backend init, model loading, document ingestion
+ *   Events     — all user interaction wiring (bottom of file)
+ * =========================================================================*/
+
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+/** All magic numbers in one place. Change here, applies everywhere. */
+const Config = Object.freeze({
+  CHUNK_MAX_CHARS:          1400,   // flush a chunk after accumulating this many raw chars
+  CHUNK_SLICE:              1000,   // slice size when a single token exceeds 1200 chars
+  CHUNK_OVERLAP:             200,   // overlap between slices to preserve context
+  RETRIEVAL_CANDIDATES:       12,   // hybrid top-N fed to the optional reranker
+  RETRIEVAL_TOP_K:             5,   // final chunks sent to the LLM as context
+  HISTORY_MAX_TURNS:           8,   // user/assistant pairs retained in chat history
+  HYBRID_SEMANTIC_WEIGHT:    0.7,   // weight for cosine similarity in hybrid score
+  HYBRID_KEYWORD_WEIGHT:     0.3,   // weight for keyword overlap in hybrid score
+  HEADING_BOOST_MAX:         1.8,   // maximum score multiplier from heading term match
+  HEADING_BOOST_PER_MATCH:  0.20,   // score multiplier increment per matched heading term
+});
+
+
+// ── STATE ──────────────────────────────────────────────────────────────────────
+/**
+ * Single mutable session object.
+ * Never mutated outside the module that owns the relevant field.
+ */
+const State = {
+  backend:      null,                    // 'lmstudio' | 'llamacpp' | 'transformers'
+  url:          'http://127.0.0.1:1234', // base URL for API backends
+  chatModel:    '',
+  embedModel:   '',
+  rerankModel:  '',                      // llamacpp only; empty string = no reranker
+
+  // Transformers.js model handles (populated during Setup.loadTransformers)
+  tjsTokenizer:       null,
+  tjsEmbedModel:      null,
+  tjsRerankTokenizer: null,
+  tjsRerankModel:     null,
+  tjsLLMPipeline:     null,
+  tjsMath:            null,   // { mean_pooling, layer_norm }
+  TextStreamer:       null,
+
+  // Runtime data
+  chunks:         [],    // [{id, docName, text, vector}] — all embedded chunks
+  chatHistory:    [],    // [{role, content}] — conversation for pass 1 (incl. system)
+  jsonState:      { intent: 'Onbekend', facts_gathered: [] },
+  lastChunks:     null,  // cached retrieval result; reused for follow-up turns
+  forceNewSearch: false, // set true by 🔍 button; cleared after each turn
+};
+
+
+// ── MODULE: Chunker ────────────────────────────────────────────────────────────
+const Chunker = {
+  /**
+   * Split markdown text into semantically coherent chunks for embedding.
+   *
+   * Strategy:
+   *  - Flush on H1–H3 boundaries (new section = new chunk)
+   *  - Flush when accumulated raw chars exceed CHUNK_MAX_CHARS
+   *  - Tokens >1200 chars are sliced with CHUNK_OVERLAP before accumulating
+   *  - Each chunk carries a heading breadcrumb (ancestor H1/H2/H3) as context prefix
+   *
+   * Falls back to blank-line splitting when marked.lexer is unavailable.
+   *
+   * @param  {string} text      — raw markdown source
+   * @param  {string} filename  — used to generate unique chunk IDs
+   * @returns {Array<{id: string, text: string}>}
+   */
+  chunk(text, filename) {
+    if (typeof marked === 'undefined' || !marked.lexer) {
+      return text.split(/\n\s*\n/).filter(c => c.trim().length > 20)
+        .map((t, i) => ({ id: `${filename}_${i}`, text: t.trim() }));
+    }
+
+    const tokens   = marked.lexer(text);
+    const chunks   = [];
+    let   idx      = 0;
+    const hStack   = ['', '', ''];  // heading stack [h1, h2, h3]
+    let   bodyToks = [];
+
+    const accLen = () => bodyToks.reduce((s, t) => s + (t.raw || '').length, 0);
+
+    const flush = () => {
+      const body = bodyToks.map(t => t.raw || '').join('').trim();
+      if (body.length < 20) { bodyToks = []; return; }
+      const crumb = hStack
+        .map((h, i) => h ? `${'#'.repeat(i + 1)} ${h}` : null)
+        .filter(Boolean).join('\n');
+      chunks.push({ id: `${filename}_${idx++}`, text: crumb ? `${crumb}\n\n${body}` : body });
+      bodyToks = [];
+    };
+
+    for (const tok of tokens) {
+      if (tok.type === 'heading' && tok.depth <= 3) {
+        if (bodyToks.length) flush();
+        hStack[tok.depth - 1] = tok.text || '';
+        for (let d = tok.depth; d < 3; d++) hStack[d] = '';
+      } else {
+        const raw = tok.raw || '';
+        if (raw.length > 1200) {
+          const { CHUNK_SLICE: S, CHUNK_OVERLAP: O } = Config;
+          for (let s = 0; s < raw.length; s += S - O) {
+            const slice = raw.slice(s, s + S);
+            bodyToks.push({ ...tok, raw: slice, text: slice });
+            if (accLen() > Config.CHUNK_MAX_CHARS) flush();
+          }
+        } else {
+          bodyToks.push(tok);
+          if (accLen() > Config.CHUNK_MAX_CHARS) flush();
+        }
+      }
+    }
+    flush();
+    if (!chunks.length && text.trim()) chunks.push({ id: `${filename}_0`, text: text.trim() });
+    return chunks;
+  },
+};
+
+
+// ── MODULE: Backends ───────────────────────────────────────────────────────────
+/**
+ * Unified inference façade.
+ * All callers use Backends.embed/rerank/inferJSON/inferStream/inferPass3.
+ * State.backend determines which adapter is used internally.
+ */
+const Backends = {
+  /** Embed text for storage (role='document') or query (role='query'). */
+  async embed(text, role = 'document') {
+    return State.backend === 'transformers'
+      ? this._tjs.embed(text, role)
+      : this._api.embed(text, role);
+  },
+
+  /**
+   * Rerank candidates against query; returns re-sorted [{...chunk, score}].
+   * No-op for LM Studio (no reranking endpoint available).
+   */
+  async rerank(query, candidates) {
+    if (State.backend === 'transformers') return this._tjs.rerank(query, candidates);
+    if (State.backend === 'llamacpp')     return this._api.rerank(query, candidates);
+    return candidates; // lmstudio: pass through unchanged
+  },
+
+  /**
+   * Pass 1: compact JSON decision, no streaming, tight token budget.
+   * Also used for Pass 3 (compression) on all backends.
+   */
+  async inferJSON(messages, maxTokens = 400, temperature = 0.0) {
+    return State.backend === 'transformers'
+      ? this._tjs.inferJSON(messages, maxTokens)
+      : this._api.inferJSON(messages, maxTokens, temperature);
+  },
+
+  /**
+   * Pass 2: streaming markdown reply.
+   * onChunk(text) is called per token/chunk as text arrives.
+   *
+   * Dispatch:
+   *  - transformers : token-by-token via TextStreamer callback
+   *  - llamacpp     : SSE streaming via /v1/chat/completions?stream=true
+   *  - lmstudio     : single blocking fetch, then onChunk called once with full text
+   *                   (preserves original b16 behaviour — no behavioural change)
+   */
+  async inferStream(messages, onChunk) {
+    if (State.backend === 'transformers') return this._tjs.inferStream(messages, onChunk);
+    if (State.backend === 'llamacpp')     return this._api.inferStreamSSE(messages, onChunk);
+    // lmstudio: deliver full response in one shot, matching original behaviour
+    const full = await this._api.inferJSON(messages, 1024, 0.2);
+    onChunk(full);
+    return full;
+  },
+
+
+  // ── Transformers.js adapter ──────────────────────────────────────────────
+  _tjs: {
+    async embed(text, role) {
+      const prefix = role === 'query' ? 'search_query: ' : 'search_document: ';
+      const inputs = State.tjsTokenizer(prefix + text,
+        { padding: true, truncation: true, max_length: 512 });
+      const { last_hidden_state } = await State.tjsEmbedModel(inputs);
+      let emb = State.tjsMath.mean_pooling(last_hidden_state, inputs.attention_mask);
+      emb = State.tjsMath.layer_norm(emb, [emb.dims[1]]);
+      return emb.normalize(2, -1).tolist()[0];
+    },
+
+    async rerank(query, candidates) {
+      if (!State.tjsRerankModel || !State.tjsRerankTokenizer) return candidates;
+      try {
+        const sigmoid = x => 1 / (1 + Math.exp(-x));
+        // WHY NOT pipeline('text-classification'):
+        //   It treats input as single string, ignores text_pair, returns sigmoid-
+        //   squashed label scores always ~1.0. Cross-encoders need batched
+        //   (query, passage) pairs → raw logits → sigmoid applied manually.
+        // WHY Xenova/bge-reranker-base not v2-m3:
+        //   v2-m3 exports use external data format (model.onnx + 2.2 GB sidecar).
+        //   ONNX RT WebGPU/WASM needs Module.MountedFiles for that — unavailable
+        //   for remote HF CDN fetches. bge-reranker-base = single self-contained
+        //   model.onnx (~260 MB). XLM-RoBERTa backbone handles Dutch fine.
+        const inputs = State.tjsRerankTokenizer(
+          candidates.map(() => query),
+          { text_pair: candidates.map(c => c.text), padding: true, truncation: true, max_length: 512 }
+        );
+        const { logits } = await State.tjsRerankModel(inputs);
+        const scores = Array.from(logits.data);
+        return candidates
+          .map((c, i) => ({ ...c, score: sigmoid(scores[i]) }))
+          .sort((a, b) => b.score - a.score);
+      } catch (e) {
+        console.warn('TJS reranker failed, using hybrid order:', e);
+        return candidates;
+      }
+    },
+
+    async inferJSON(messages, maxTokens = 400) {
+      const out = await State.tjsLLMPipeline(messages,
+        { max_new_tokens: maxTokens, do_sample: false, repetition_penalty: 1.1 });
+      const gen = out[0].generated_text;
+      return Array.isArray(gen) ? (gen.at(-1).content ?? '') : String(gen);
+    },
+
+    async inferStream(messages, onChunk) {
+      const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer, {
+        skip_prompt: true, skip_special_tokens: true,
+        callback_function: t => onChunk && onChunk(t),
+      });
+      const out = await State.tjsLLMPipeline(messages,
+        { max_new_tokens: 1024, do_sample: false, repetition_penalty: 1.15, streamer });
+      const gen = out[0].generated_text;
+      return Array.isArray(gen) ? (gen.at(-1).content ?? '') : String(gen);
+    },
+  },
+
+
+  // ── API adapter (LM Studio + llama.cpp) ──────────────────────────────────
+  _api: {
+    async embed(text, role) {
+      // Nomic models require task-type prefixes for accurate retrieval
+      const isNomic = State.embedModel.toLowerCase().includes('nomic');
+      const input   = isNomic
+        ? (role === 'query' ? `search_query: ${text}` : `search_document: ${text}`)
+        : text;
+      const res  = await fetch(`${State.url}/v1/embeddings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: State.embedModel, input }),
+      });
+      const data = await res.json();
+      return data.data[0].embedding;
+    },
+
+    /**
+     * llama.cpp /v1/rerank — OpenAI-compatible reranking endpoint.
+     * Gracefully falls back to original order on error or missing model.
+     */
+    async rerank(query, candidates) {
+      if (!State.rerankModel) return candidates;
+      try {
+        const res = await fetch(`${State.url}/v1/rerank`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: State.rerankModel,
+            query,
+            documents: candidates.map(c => c.text),
+            top_n: candidates.length,
+          }),
+        });
+        if (!res.ok) throw new Error(`Rerank HTTP ${res.status}`);
+        const { results } = await res.json();
+        return results
+          .sort((a, b) => b.relevance_score - a.relevance_score)
+          .map(r => ({ ...candidates[r.index], score: r.relevance_score }));
+      } catch (e) {
+        console.warn('API reranker failed, falling back to hybrid order:', e);
+        return candidates;
+      }
+    },
+
+    async inferJSON(messages, maxTokens = 400, temperature = 0.0) {
+      const res = await fetch(`${State.url}/v1/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: State.chatModel, messages,
+          temperature, max_tokens: maxTokens, repetition_penalty: 1.1,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || `API error ${res.status}`);
+      return data.choices[0].message.content;
+    },
+
+    /** SSE streaming for llama.cpp; buffers partial lines across read() chunks. */
+    async inferStreamSSE(messages, onChunk) {
+      const res = await fetch(`${State.url}/v1/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: State.chatModel, messages,
+          temperature: 0.2, max_tokens: 1024, repetition_penalty: 1.15, stream: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `API error ${res.status}`);
+      }
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let   buf = '', accumulated = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop(); // retain incomplete last line
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') return accumulated;
+          try {
+            const delta = JSON.parse(payload).choices?.[0]?.delta?.content;
+            if (delta) { accumulated += delta; onChunk(delta); }
+          } catch { /* ignore malformed SSE chunk */ }
+        }
+      }
+      return accumulated;
+    },
+  },
+};
+
+
+// ── MODULE: Retrieval ──────────────────────────────────────────────────────────
+const Retrieval = {
+  cosine(a, b) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]**2; nb += b[i]**2; }
+    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  },
+
+  tokenize(query) {
+    return query.toLowerCase().match(/[\wÀ-ÿ]{2,}/g) || [];
+  },
+
+  /** BM25-light keyword score: fraction of query terms present in text. */
+  keywordScore(text, terms) {
+    const lower = text.toLowerCase();
+    const hits  = terms.filter(t => lower.includes(t)).length;
+    return terms.length ? hits / terms.length : 0;
+  },
+
+  /** Score multiplier when query terms appear in H1/H2 headings. */
+  headingBoost(chunk, terms) {
+    const h12 = chunk.text.split('\n')
+      .filter(l => /^#{1,2}\s/.test(l.trimStart())).join(' ').toLowerCase();
+    if (!h12) return 1.0;
+    const hits = terms.filter(t => t.length >= 2 && h12.includes(t)).length;
+    return Math.min(Config.HEADING_BOOST_MAX, 1.0 + hits * Config.HEADING_BOOST_PER_MATCH);
+  },
+
+  /**
+   * Full retrieval pipeline:
+   *   1. Embed query
+   *   2. Hybrid score: (cosine × 0.7) + (keyword × 0.3), boosted by heading match
+   *   3. Take top RETRIEVAL_CANDIDATES
+   *   4. Optional rerank (TJS cross-encoder or llama.cpp /v1/rerank)
+   *   5. Return top RETRIEVAL_TOP_K
+   *
+   * @param {string}        query
+   * @param {Function|null} onPhase  — UI callback: 'embed' | 'hybrid' | 'rerank'
+   */
+  async search(query, onPhase) {
+    const terms = this.tokenize(query);
+    if (onPhase) onPhase('embed');
+    const qVec = await Backends.embed(query, 'query');
+
+    if (onPhase) onPhase('hybrid');
+    const scored = State.chunks.map(c => ({
+      ...c,
+      score: (this.cosine(qVec, c.vector) * Config.HYBRID_SEMANTIC_WEIGHT
+            + this.keywordScore(c.text, terms)  * Config.HYBRID_KEYWORD_WEIGHT)
+           * this.headingBoost(c, terms),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    let candidates = scored.slice(0, Config.RETRIEVAL_CANDIDATES);
+
+    const hasReranker = State.backend === 'transformers'
+      ? (State.tjsRerankModel && State.tjsRerankTokenizer)
+      : (State.backend === 'llamacpp' && !!State.rerankModel);
+
+    if (hasReranker) {
+      if (onPhase) onPhase('rerank');
+      candidates = await Backends.rerank(query, candidates);
+    }
+
+    return candidates.slice(0, Config.RETRIEVAL_TOP_K);
+  },
+};
+
+
+// ── MODULE: UI ─────────────────────────────────────────────────────────────────
+const UI = {
+  /**
+   * Merge a state_update object into the accumulated jsonState.
+   * Intent is tracked as a stack (intent_history).
+   * facts_gathered and user_facts are appended without duplicates.
+   * decision is prepended to decision_history on change.
+   */
+  updateState(update) {
+    const s = State.jsonState;
+    if (update?.intent && update.intent !== s.intent) {
+      if (!s.intent_history) s.intent_history = [];
+      if (s.intent && s.intent !== 'Onbekend') s.intent_history.push(s.intent);
+      s.intent = update.intent;
+    }
+    ['facts_gathered', 'user_facts'].forEach(key => {
+      if (!Array.isArray(update?.[key])) return;
+      if (!Array.isArray(s[key])) s[key] = [];
+      update[key].forEach(f => { if (f && !s[key].includes(f)) s[key].push(f); });
+    });
+    if (update?.decision !== undefined) {
+      if (!s.decision_history) s.decision_history = [];
+      if (s.current_decision) s.decision_history.push(s.current_decision);
+      s.current_decision = update.decision;
+    }
+    const skip = new Set(['intent', 'facts_gathered', 'user_facts', 'decision']);
+    Object.entries(update || {}).forEach(([k, v]) => { if (!skip.has(k)) s[k] = v; });
+    document.getElementById('state-output').textContent = JSON.stringify(s, null, 2);
+  },
+
+  /** Remove all yellow chunk highlights from document panes. */
+  clearHighlights() {
+    document.querySelectorAll('mark.ai-hl').forEach(m => {
+      m.parentNode?.replaceChild(document.createTextNode(m.textContent), m);
+      m.parentNode?.normalize();
+    });
+    document.querySelectorAll('.chunk-block').forEach(el => { el.style.background = ''; });
+  },
+
+  /**
+   * Highlight a chunk block and scroll it to vertical centre in its doc-content pane.
+   * @param {string} chunkId  — e.g. "beleid.md_3"
+   */
+  highlightChunk(chunkId) {
+    const el = document.getElementById(chunkId);
+    if (!el) return;
+    el.style.background = 'var(--hl)';
+    const pane = el.closest('.doc-content');
+    if (!pane) return;
+    const offset = pane.scrollTop
+      + el.getBoundingClientRect().top - pane.getBoundingClientRect().top
+      - pane.clientHeight / 2 + el.clientHeight / 2;
+    pane.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' });
+  },
+
+  /** Build a row of clickable citation chips. Clicking toggles highlight + scroll. */
+  buildChips(citations) {
+    const row = document.createElement('div');
+    row.style.marginTop = '8px';
+    citations.forEach(cit => {
+      if (!cit.document) return;
+      const suffix = cit.chunkId ? ` #${cit.chunkId.split('_').at(-1)}` : '';
+      const chip = document.createElement('span');
+      chip.className = 'citation-chip';
+      chip.title     = cit.chunkId || cit.document;
+      chip.textContent = `📍 ${cit.document}${suffix}`;
+      chip.addEventListener('click', () => {
+        const isActive = chip.classList.contains('chip-active');
+        row.querySelectorAll('.chip-active').forEach(c => c.classList.remove('chip-active'));
+        this.clearHighlights();
+        if (!isActive) {
+          chip.classList.add('chip-active');
+          if (cit.chunkId) this.highlightChunk(cit.chunkId);
+        }
+      });
+      row.append(chip);
+    });
+    return row;
+  },
+
+  /** Add a static message bubble to the chat history pane. */
+  addMessage(role, text, citations = []) {
+    const history = document.getElementById('chat-history');
+    const msg = document.createElement('div');
+    msg.className = `msg ${role}`;
+    if (role === 'bot' && typeof marked !== 'undefined') {
+      const body = document.createElement('div');
+      body.className = 'md-body';
+      body.innerHTML = marked.parse(text);
+      msg.append(body);
+    } else {
+      msg.textContent = text;
+    }
+    if (citations.length) msg.append(this.buildChips(citations));
+    history.append(msg);
+    history.scrollTop = history.scrollHeight;
+    return msg;
+  },
+
+  /**
+   * Create a live streaming bubble that re-renders markdown incrementally.
+   *
+   * @param {Element|null} parentEl
+   *   null    → standalone .msg.bot wrapper appended to #chat-history
+   *   element → .md-body embedded inside parentEl (used for <details> thinking block);
+   *             chips are appended to parentEl on finalize()
+   *
+   * @returns {{ el: Element, append(chunk: string): void, finalize(citations: Array): string }}
+   */
+  createBubble(parentEl = null) {
+    const history = document.getElementById('chat-history');
+    const wrapper = parentEl ?? (() => {
+      const w = document.createElement('div');
+      w.className = 'msg bot';
+      history.append(w);
+      return w;
+    })();
+
+    const body = document.createElement('div');
+    body.className = 'md-body streaming-cursor';
+    wrapper.append(body);
+    history.scrollTop = history.scrollHeight;
+
+    let text = '';
+    const render = () => {
+      body.innerHTML = typeof marked !== 'undefined'
+        ? marked.parse(text)
+        : text.replace(/\n/g, '<br>');
+    };
+
+    return {
+      el: wrapper,
+      append(chunk) {
+        text += chunk; render(); history.scrollTop = history.scrollHeight;
+      },
+      finalize(citations = []) {
+        body.classList.remove('streaming-cursor');
+        render();
+        if (citations.length) wrapper.append(UI.buildChips(citations));
+        history.scrollTop = history.scrollHeight;
+        return text;
+      },
+    };
+  },
+
+  /** Show a transient animated status line (used for retrieval phase indicators). */
+  showStatus(text) {
+    const el = document.createElement('div');
+    el.className = 'msg bot streaming';
+    el.textContent = text;
+    const history = document.getElementById('chat-history');
+    history.append(el);
+    history.scrollTop = history.scrollHeight;
+    return el;
+  },
+
+  /**
+   * Render a markdown document as a doc-frame article.
+   * Each chunk gets its own .chunk-block div with the chunk ID as element ID,
+   * enabling chip → scroll → highlight navigation.
+   */
+  renderDocument(filename, text) {
+    const chunks  = Chunker.chunk(text, filename);
+    const content = document.createElement('div');
+    content.className = 'doc-content';
+    content.id = `content-${filename}`;
+    chunks.forEach(c => {
+      const block = document.createElement('div');
+      block.className = 'chunk-block';
+      block.id = c.id;
+      block.innerHTML = marked.parse(c.text);
+      content.append(block);
+    });
+    const frame = document.createElement('article');
+    frame.className = 'doc-frame';
+    frame.id = `frame-${filename}`;
+    const title = document.createElement('header');
+    title.className = 'doc-title';
+    title.textContent = filename;
+    frame.append(title, content);
+    document.getElementById('docs-container').append(frame);
+  },
+
+  /**
+   * Post-process rendered document panes: convert
+   * marked's <code class="language-mermaid"> blocks to <div class="mermaid">
+   * and call mermaid.run() if mermaid is loaded.
+   */
+  renderMermaid() {
+    if (typeof mermaid === 'undefined') return;
+    document.querySelectorAll('code.language-mermaid').forEach(el => {
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = el.textContent;
+      (el.closest('pre') ?? el).replaceWith(div);
+    });
+    mermaid.run({ querySelector: '.mermaid' });
+  },
+};
+
+
+// ── MODULE: NLP helpers ────────────────────────────────────────────────────────
+
+/**
+ * Detect likely language of a short text (Dutch vs English).
+ * Uses common Dutch function words — sufficient at this scale.
+ * Result drives the language instruction in pass 2 and pass 3 system prompts.
+ */
+function detectLanguage(text) {
+  const nlWords = new Set([
+    'de','het','een','is','van','in','dat','zijn','op','aan',
+    'als','er','maar','wat','niet','voor','met','ook','dan',
+    'ik','je','ze','we','dit','die','door','heeft','wordt',
+  ]);
+  const tokens = text.toLowerCase().split(/\s+/);
+  const ratio  = tokens.filter(w => nlWords.has(w.replace(/[^a-z]/g, '')))
+                       .length / Math.max(tokens.length, 1);
+  return ratio > 0.12 ? 'Dutch' : 'English';
+}
+
+/**
+ * Robustly extract the JSON object from raw LLM output.
+ *
+ * Handles:
+ *  - Fenced code blocks (```json ... ```)
+ *  - Prose wrapping around JSON
+ *  - Partial or slightly malformed JSON (field-by-field fallback)
+ *
+ * Normalises top-level fields (intent, user_facts, facts_gathered) into
+ * state_update for consistent downstream handling.
+ */
+function extractJSON(raw) {
+  let text = raw.trim()
+    .replace(/^`{3}(?:json)?\s*/i, '').replace(/\s*`{3}\s*$/, '');
+
+  const norm = obj => {
+    if (!obj) return obj;
+    if (!obj.state_update) obj.state_update = {};
+    ['intent', 'user_facts', 'facts_gathered'].forEach(k => {
+      if (obj[k] !== undefined && obj.state_update[k] === undefined)
+        obj.state_update[k] = obj[k];
+    });
+    return obj;
+  };
+
+  // Direct parse (ideal case)
+  try { return norm(JSON.parse(text)); } catch {}
+
+  // Extract first {...} block
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { return norm(JSON.parse(m[0])); } catch {}
+
+  // Field-by-field fallback for slightly malformed output
+  try {
+    const b   = m[0];
+    const str = pat => b.match(pat)?.[1];
+    const arr = pat => { try { return JSON.parse(str(pat) ?? 'null'); } catch { return null; } };
+    const obj = {
+      decision:  str(/"decision"\s*:\s*"([^"]*?)"/),
+      citations: arr(/"citations"\s*:\s*(\[[\s\S]*?\])\s*[,}]/),
+      state_update: {
+        intent:         str(/"intent"\s*:\s*"([^"]*?)"/),
+        user_facts:     arr(/"user_facts"\s*:\s*(\[[\s\S]*?\])/),
+        facts_gathered: arr(/"facts_gathered"\s*:\s*(\[[\s\S]*?\])/),
+      },
+    };
+    if (obj.decision || obj.state_update?.intent || obj.citations) return norm(obj);
+  } catch {}
+  return null;
+}
+
+
+// ── MODULE: Pipeline ──────────────────────────────────────────────────────────
+const Pipeline = {
+  /**
+   * Three-pass RAG pipeline for a single user turn.
+   *
+   * ── Pass 1: JSON decision (compact, no streaming, tight budget) ─────────
+   *   System prompt (set at session start) asks for:
+   *   { decision, state_update: { intent, user_facts, facts_gathered }, citations }
+   *   Drives: state pane update + document chunk highlights.
+   *
+   * ── Pass 2: Streamed markdown reply (practical, language-matched) ────────
+   *   Uses pass-1 decision as grounding; full context also passed.
+   *   Rendered live into a collapsible <details> thinking block.
+   *
+   * ── Pass 3: Compression + follow-up questions (non-streaming) ────────────
+   *   Compresses pass-2 into ≤3 sentences + 2 grounded follow-up questions.
+   *   Follow-up questions use the accumulated intent graph from the state pane.
+   *   Rendered as a separate .pass3-block; blockquote lines are clickable → auto-send.
+   *
+   * @param {string} text — the user's question
+   */
+  async run(text) {
+    const history   = document.getElementById('chat-history');
+    const lang      = detectLanguage(text);
+    const langInstr = `Respond in ${lang}. Match the language of the user's question exactly.`;
+
+    const status = UI.showStatus('🔍 Vraag inbedden...');
+    let rerankTimer = null;
+
+    try {
+      // ── Retrieval ───────────────────────────────────────────────────────
+      const onPhase = phase => {
+        if (phase === 'embed')  status.textContent = '🔍 Vraag inbedden...';
+        if (phase === 'hybrid') status.textContent = '🔍 Hybride retrieval (vector + keyword)...';
+        if (phase === 'rerank') {
+          const t0 = Date.now();
+          status.textContent = '⚖️ Reranking (cross-encoder)...';
+          rerankTimer = setInterval(() => {
+            status.textContent = `⚖️ Reranking... ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+            history.scrollTop = history.scrollHeight;
+          }, 400);
+        }
+        history.scrollTop = history.scrollHeight;
+      };
+
+      // Reuse cached retrieval for follow-up turns unless 🔍 was explicitly pressed
+      const hasPrior = State.chatHistory.length > 1;
+      let chunks;
+      if (hasPrior && State.lastChunks && !State.forceNewSearch) {
+        chunks = State.lastChunks;
+        status.textContent = '♻️ Vorige zoekresultaten hergebruikt';
+      } else {
+        chunks = await Retrieval.search(text, onPhase);
+        State.lastChunks = chunks;
+      }
+      State.forceNewSearch = false;
+      if (rerankTimer) { clearInterval(rerankTimer); rerankTimer = null; }
+
+      console.log('[RAG] Top chunks:', chunks.map(c => ({
+        id: c.id, score: c.score?.toFixed(3),
+        preview: c.text.split('\n').slice(0, 2).join(' | '),
+      })));
+
+      const contextString = 'CONTEXT:\n' + chunks
+        .map(c => `[Doc: ${c.docName}, ChunkId: ${c.id}]\n${c.text}`)
+        .join('\n\n');
+
+      // ── Pass 1: JSON decision ─────────────────────────────────────────────
+      status.textContent = '🧠 Beslissing nemen (pass 1)...';
+      history.scrollTop = history.scrollHeight;
+
+      const p1msgs = [...State.chatHistory,
+        { role: 'user', content: `${contextString}\nQuestion: ${text}` }];
+      const p1raw  = await Backends.inferJSON(p1msgs, 400, 0.0);
+      console.log('[Pass 1 raw]', p1raw);
+      const parsed = extractJSON(p1raw);
+
+      if (!parsed) {
+        status.remove();
+        UI.addMessage('bot', `⚠️ Pass 1 returned no valid JSON.\n\n${p1raw}`);
+        return;
+      }
+
+      if (parsed.state_update) UI.updateState(parsed.state_update);
+      if (parsed.citations?.length) {
+        UI.clearHighlights();
+        parsed.citations.forEach(c => { if (c.chunkId) UI.highlightChunk(c.chunkId); });
+      }
+
+      // ── Pass 2: Streamed reply ──────────────────────────────────────────────
+      status.remove();
+
+      // LM Studio is non-streaming: show a loading indicator while the single
+      // blocking fetch completes (matches original b16 behaviour)
+      const p2status = State.backend === 'lmstudio'
+        ? UI.showStatus('✍️ Antwoord opstellen (pass 2)...') : null;
+
+      // Thinking block: collapsible <details> element containing the pass-2 reply
+      const thinking = document.createElement('details');
+      thinking.className = 'msg bot thinking-block';
+      thinking.style.cssText = 'font-size:.82rem;color:#555;background:#f8f8f8;border-color:#ddd';
+      const thinkingSummary = document.createElement('summary');
+      thinkingSummary.style.cssText = 'cursor:pointer;font-size:.8rem;color:#888;user-select:none;padding:.3rem 0';
+      thinkingSummary.textContent = '🧠 Redenering (klik om te tonen/verbergen)';
+      thinking.append(thinkingSummary);
+      history.append(thinking);
+
+      const bubble = UI.createBubble(thinking);
+
+      const decisionCtx = parsed.decision
+        ? `Decision: ${parsed.decision}`
+        : `Analysis: ${JSON.stringify(parsed.state_update || {})}`;
+
+      const p2system = `You are a practical assistant. Write a clear, actionable answer based on the decision and context provided. ${langInstr} Use markdown formatting: bullet lists for steps, bold for key terms. Be concise and avoid legalese. Do not repeat the decision verbatim — explain what it means in practice and what the user should do next.`;
+      const p2msgs = [
+        { role: 'system', content: p2system },
+        { role: 'user', content: `${decisionCtx}\n\nContext used:\n${contextString}\n\nUser question: ${text}\n\nWrite a practical markdown answer:` },
+      ];
+
+      await Backends.inferStream(p2msgs, chunk => bubble.append(chunk));
+      if (p2status) p2status.remove();
+      const replyText = bubble.finalize(parsed.citations || []);
+
+      // ── Pass 3: Compression + follow-up questions ───────────────────────────
+      const accFacts   = (State.jsonState.facts_gathered || []).join('; ') || 'none yet';
+      const intentHist = State.jsonState.intent_history || [];
+      const intentCtx  = intentHist.length
+        ? `Prior intents: ${intentHist.join(' → ')} → ${State.jsonState.intent}`
+        : `Current intent: ${State.jsonState.intent || 'unknown'}`;
+
+      const p3system = `You are a concise advisor. Compress the provided draft answer and add follow-up questions.
+Output format (use exact structure):
+[SHORT ANSWER]
+2-3 sentences max. ${langInstr} No bullet lists. No headers. No legalese.
+
+[FOLLOW-UP]
+Exactly 2 short questions (one per line, starting with >) that would help clarify or advance the user's intent.
+Base the questions on the accumulated context and what is still unclear or unresolved.
+The questions must also be in ${lang}.`;
+
+      const p3user = `User question: ${text}
+
+Accumulated context:
+- ${intentCtx}
+- Known facts: ${accFacts}
+- Current decision: ${State.jsonState.current_decision || 'see state'}
+
+Draft answer to compress:
+${replyText}
+
+Rewrite as short answer + 2 follow-up questions:`;
+
+      let p3text = '';
+      try {
+        p3text = await Backends.inferJSON(
+          [{ role: 'system', content: p3system }, { role: 'user', content: p3user }],
+          300, 0.3
+        );
+      } catch (e3) { console.warn('Pass 3 failed, skipping:', e3); }
+
+      if (p3text.trim()) {
+        const p3el   = document.createElement('div');
+        p3el.className = 'msg bot pass3-block';
+        const p3body = document.createElement('div');
+        p3body.className = 'md-body';
+        const p3md = p3text
+          .replace(/\[SHORT ANSWER\]/gi, '')
+          .replace(/\[FOLLOW-UP\]/gi,    '\n\n---\n\n**Mogelijke vervolgvragen:**\n\n')
+          .trim();
+        p3body.innerHTML = typeof marked !== 'undefined' ? marked.parse(p3md) : p3md;
+        p3el.append(p3body);
+
+        // Clickable follow-up blockquotes → auto-fill the input and submit
+        p3el.querySelectorAll('blockquote p, blockquote').forEach(el => {
+          const q = el.textContent.trim().replace(/^>\s*/, '');
+          if (q.length > 5) {
+            el.style.cursor = 'pointer';
+            el.title = 'Klik om deze vraag te stellen';
+            el.addEventListener('click', () => {
+              document.getElementById('chat-input').value = q;
+              document.getElementById('input-form').requestSubmit();
+            });
+          }
+        });
+        history.append(p3el);
+        history.scrollTop = history.scrollHeight;
+      }
+
+      // ── Update conversation history (compact form to preserve context budget) ──
+      // Full prose reply is NOT stored — it would bloat the context window and
+      // cause pass-1 JSON failures on follow-up turns (model runs out of budget
+      // before closing the JSON object).
+      const compact = JSON.stringify({
+        decision:     parsed.decision || '',
+        state_update: {
+          intent:         parsed.state_update?.intent || '',
+          user_facts:     parsed.state_update?.user_facts || [],
+          facts_gathered: (parsed.state_update?.facts_gathered || []).slice(0, 3),
+        },
+        citations: (parsed.citations || []).slice(0, 2),
+      });
+      State.chatHistory.push({ role: 'user',      content: text    });
+      State.chatHistory.push({ role: 'assistant', content: compact });
+
+      // Trim to HISTORY_MAX_TURNS (always preserve system message at index 0)
+      const [sys, ...qa] = State.chatHistory;
+      if (qa.length > Config.HISTORY_MAX_TURNS * 2)
+        State.chatHistory = [sys, ...qa.slice(-(Config.HISTORY_MAX_TURNS * 2))];
+
+    } catch (e) {
+      if (rerankTimer) clearInterval(rerankTimer);
+      try { status.remove(); } catch {}
+      throw e; // re-throw; outer form submit handler shows the error message
+    }
+  },
+};
+
+
+// ── MODULE: Setup ──────────────────────────────────────────────────────────────
+const Setup = {
+  /** Show one panel inside the setup dialog; hide all others. */
+  showPanel(id) {
+    document.querySelectorAll('#setup-dialog .panel').forEach(p => { p.hidden = true; });
+    document.getElementById(id).hidden = false;
+  },
+
+  /** Update the document embedding progress bar and label. */
+  progress(text, pct) {
+    document.getElementById('load-text').textContent = text;
+    document.getElementById('load-bar').value = Math.round(pct);
+  },
+
+  /** Fetch model list from an OpenAI-compatible /v1/models endpoint. */
+  async loadApiModels(url) {
+    const res = await fetch(`${url}/v1/models`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()).data.map(m => m.id);
+  },
+
+  /**
+   * Populate a <select> element with model IDs.
+   * Auto-selects the first model whose name includes any of preferTerms.
+   */
+  populateSelect(selectId, models, preferTerms = []) {
+    const sel = document.getElementById(selectId);
+    sel.innerHTML = '';
+    models.forEach(m => sel.add(new Option(m, m)));
+    const idx = models.findIndex(m => preferTerms.some(t => m.toLowerCase().includes(t)));
+    if (idx >= 0) sel.selectedIndex = idx;
+  },
+
+  /**
+   * Download and initialise all three Transformers.js models:
+   *   1. nomic-ai/nomic-embed-text-v1.5 (q4)  — embedding
+   *   2. Xenova/bge-reranker-base (q8)          — reranking
+   *   3. onnx-community/granite-4.0-micro-ONNX-web — LLM
+   *
+   * Progress is reported to the TJS panel's own progress bar (not the
+   * document embedding bar in panel-loading).
+   */
+  async loadTransformers() {
+    let mod;
+    try { mod = await import('./transformers.min.js'); }
+    catch { throw new Error('transformers.min.js niet gevonden naast index.html.'); }
+
+    const { pipeline, env, TextStreamer, AutoTokenizer, AutoModel,
+            AutoModelForSequenceClassification, mean_pooling, layer_norm } = mod;
+
+    State.TextStreamer = TextStreamer;
+    State.tjsMath = { mean_pooling, layer_norm };
+    env.allowLocalModels = false; env.allowRemoteModels = true; env.useBrowserCache = true;
+    const device = typeof navigator.gpu !== 'undefined' ? 'webgpu' : 'wasm';
+
+    const prog = (msg, pct) => {
+      document.getElementById('tjs-prog-text').textContent = msg;
+      document.getElementById('tjs-prog-bar').value = Math.round(pct);
+    };
+
+    // 1. Embedding model
+    prog('Embedding tokenizer laden (nomic-embed-text-v1.5)...', 5);
+    State.tjsTokenizer = await AutoTokenizer.from_pretrained('nomic-ai/nomic-embed-text-v1.5');
+    State.tjsEmbedModel = await AutoModel.from_pretrained('nomic-ai/nomic-embed-text-v1.5', {
+      device, dtype: 'q4',
+      progress_callback: x => { if (x.status === 'progress')
+        prog(`Embedding: ${x.file || ''} ${Math.round(x.progress || 0)}%`,
+             5 + (x.progress || 0) * 0.15); },
+    });
+
+    // 2. Reranker (see comment in Backends._tjs.rerank for why bge-reranker-base)
+    prog('Reranker laden (bge-reranker-base, browser-compatible)...', 25);
+    State.tjsRerankTokenizer = await AutoTokenizer.from_pretrained('Xenova/bge-reranker-base', {
+      progress_callback: x => { if (x.status === 'progress')
+        prog(`Reranker tokenizer: ${x.file || ''}`, 26); },
+    });
+    State.tjsRerankModel = await AutoModelForSequenceClassification.from_pretrained(
+      'Xenova/bge-reranker-base', {
+        device, dtype: 'q8',
+        progress_callback: x => { if (x.status === 'progress')
+          prog(`Reranker model: ${Math.round(x.progress || 0)}%`,
+               27 + (x.progress || 0) * 0.18); },
+      }
+    );
+
+    // 3. LLM
+    prog('LLM laden (granite-4.0-micro-ONNX-web)...', 50);
+    State.tjsLLMPipeline = await pipeline(
+      'text-generation', 'onnx-community/granite-4.0-micro-ONNX-web', {
+        device,
+        progress_callback: x => { if (x.status === 'progress')
+          prog(`LLM: ${Math.round(x.progress || 0)}%`, 50 + (x.progress || 0) * 0.5); },
+      }
+    );
+    prog('✓ Modellen geladen en gecached!', 100);
+  },
+
+  /**
+   * Build the session system prompt.
+   * Seeded with actual uploaded filenames so the model can emit correct chunkIds.
+   */
+  buildSystemPrompt(fileNames) {
+    const ex = fileNames[0] || 'document.md';
+    return `You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.
+
+Context format: [Doc: <name>, ChunkId: <name>_<N>]
+
+Output valid JSON only. No markdown, no prose, no explanations. Start with { and end with }.
+{"decision":"<one short phrase>","state_update":{"intent":"<what user wants THIS turn>","user_facts":["<role or fact stated by user>"],"facts_gathered":["<fact from context>"]},"citations":[{"document":"${ex}","chunkId":"${ex}_3"}]}
+
+Rules: no reply field. user_facts = from the question itself. facts_gathered = from context only. Copy chunkId exactly.`;
+  },
+
+  /**
+   * Render and embed all selected markdown files.
+   * Populates #docs-container panes and State.chunks.
+   * Shows progress in #panel-loading.
+   */
+  async ingestFiles(files) {
+    const names = Array.from(files).map(f => f.name);
+    State.chatHistory = [{ role: 'system', content: this.buildSystemPrompt(names) }];
+
+    for (let fi = 0; fi < files.length; fi++) {
+      const text   = await files[fi].text();
+      UI.renderDocument(files[fi].name, text);
+      const chunks = Chunker.chunk(text, files[fi].name);
+
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const pct = (fi * 100 + (ci / chunks.length) * 100) / files.length;
+        this.progress(
+          `Vectoriseren… (${files[fi].name} — chunk ${ci + 1}/${chunks.length})`,
+          Math.min(99, pct)
+        );
+        let vector;
+        try {
+          vector = await Backends.embed(chunks[ci].text, 'document');
+        } catch (e) {
+          console.error('Embedding failed on chunk', chunks[ci].id, e);
+          alert(`Embedding mislukt op chunk ${ci + 1} van ${chunks.length} in ${files[fi].name}.\n\n` +
+                `Dit kan optreden als een tekstblok te groot is voor de browser GPU.\n` +
+                `Probeer kortere documenten of gebruik de LM Studio backend.\n\nFout: ${e.message}`);
+          throw e;
+        }
+        State.chunks.push({ id: chunks[ci].id, docName: files[fi].name, text: chunks[ci].text, vector });
+      }
+    }
+    this.progress('✓ Klaar', 100);
+    UI.renderMermaid();
+  },
+};
+
+
+// ── EVENT WIRING ──────────────────────────────────────────────────────────────
+
+// ── Panel A: backend choice ──────────────────────────────────────────────────
+document.getElementById('btn-choice-lms').addEventListener('click', () => {
+  State.backend = 'lmstudio'; Setup.showPanel('panel-lmstudio');
+});
+document.getElementById('btn-choice-llama').addEventListener('click', () => {
+  State.backend = 'llamacpp'; Setup.showPanel('panel-llamacpp');
+});
+document.getElementById('btn-choice-tjs').addEventListener('click', () => {
+  State.backend = 'transformers'; Setup.showPanel('panel-transformers');
+});
+
+// ── Panel B: LM Studio ───────────────────────────────────────────────────────
+document.getElementById('btn-lms-connect').addEventListener('click', async () => {
+  const url = document.getElementById('lms-url').value.replace(/\/+$/, '');
+  const btn = document.getElementById('btn-lms-connect');
+  btn.disabled = true; btn.textContent = 'Verbinden...';
+  State.url = url;
+  try {
+    const models = await Setup.loadApiModels(url);
+    Setup.populateSelect('lms-chat',  models, ['granite', 'instruct']);
+    Setup.populateSelect('lms-embed', models, ['nomic', 'embed']);
+    document.getElementById('lms-model-selects').hidden = false;
+    btn.hidden = true;
+  } catch {
+    alert('Kan geen verbinding maken met LM Studio.\nZorg dat de server draait en CORS is toegestaan.');
+    btn.disabled = false; btn.textContent = 'Verbind met LM Studio';
+  }
+});
+
+document.getElementById('btn-lms-start').addEventListener('click', async () => {
+  const files = document.getElementById('lms-files').files;
+  if (!files.length) return alert('Selecteer minstens één markdown bestand.');
+  State.chatModel  = document.getElementById('lms-chat').value;
+  State.embedModel = document.getElementById('lms-embed').value;
+  document.getElementById('btn-lms-start').hidden = true;
+  Setup.showPanel('panel-loading');
+  await Setup.ingestFiles(files);
+  launchApp(`LM Studio — ${State.chatModel}`);
+});
+
+// ── Panel C: llama.cpp ───────────────────────────────────────────────────────
+document.getElementById('btn-llama-connect').addEventListener('click', async () => {
+  const url = document.getElementById('llama-url').value.replace(/\/+$/, '');
+  const btn = document.getElementById('btn-llama-connect');
+  btn.disabled = true; btn.textContent = 'Verbinden...';
+  State.url = url;
+  try {
+    const models    = await Setup.loadApiModels(url);
+    const withNone  = ['(geen reranker)', ...models];
+    Setup.populateSelect('llama-chat',   models,   ['granite', 'instruct']);
+    Setup.populateSelect('llama-embed',  models,   ['nomic', 'embed']);
+    Setup.populateSelect('llama-rerank', withNone, ['rerank', 'bge']);
+    document.getElementById('llama-model-selects').hidden = false;
+    btn.hidden = true;
+  } catch {
+    alert('Kan geen verbinding maken met llama.cpp.\nZorg dat de server draait en CORS is toegestaan.');
+    btn.disabled = false; btn.textContent = 'Verbind met llama.cpp';
+  }
+});
+
+document.getElementById('btn-llama-start').addEventListener('click', async () => {
+  const files  = document.getElementById('llama-files').files;
+  if (!files.length) return alert('Selecteer minstens één markdown bestand.');
+  State.chatModel   = document.getElementById('llama-chat').value;
+  State.embedModel  = document.getElementById('llama-embed').value;
+  const rerank      = document.getElementById('llama-rerank').value;
+  State.rerankModel = rerank === '(geen reranker)' ? '' : rerank;
+  document.getElementById('btn-llama-start').hidden = true;
+  Setup.showPanel('panel-loading');
+  await Setup.ingestFiles(files);
+  launchApp(`llama.cpp — ${State.chatModel}${State.rerankModel ? ' + reranker' : ''}`);
+});
+
+// ── Panel D: Transformers.js ─────────────────────────────────────────────────
+document.getElementById('btn-tjs-load').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-tjs-load');
+  btn.disabled = true;
+  document.getElementById('tjs-progress').hidden = false;
+  try {
+    await Setup.loadTransformers();
+    document.getElementById('tjs-file-section').hidden = false;
+  } catch (e) {
+    document.getElementById('tjs-prog-text').textContent = `Fout: ${e.message}. Controleer console.`;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('btn-tjs-start').addEventListener('click', async () => {
+  const files = document.getElementById('tjs-files').files;
+  if (!files.length) return alert('Selecteer minstens één markdown bestand.');
+  document.getElementById('btn-tjs-start').hidden = true;
+  Setup.showPanel('panel-loading');
+  await Setup.ingestFiles(files);
+  launchApp('Browser AI — Granite 4.0 Micro');
+});
+
+// ── Chat: new-search button ───────────────────────────────────────────────────
+document.getElementById('new-search-btn').addEventListener('click', () => {
+  State.forceNewSearch = true;
+  State.lastChunks = null;
+  const btn = document.getElementById('new-search-btn');
+  btn.style.background = 'var(--primary)';
+  setTimeout(() => { btn.style.background = '#888'; }, 800);
+});
+
+// ── Chat: form submit ─────────────────────────────────────────────────────────
+document.getElementById('input-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input   = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  const text    = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  UI.addMessage('user', text);
+  UI.clearHighlights();
+  sendBtn.disabled = true;
+  try {
+    await Pipeline.run(text);
+  } catch (err) {
+    UI.addMessage('bot', `Systeemfout: ${err.message}`);
+    console.error('[Pipeline error]', err);
+  } finally {
+    sendBtn.disabled = false;
+  }
+});
+
+// Enter to send; Shift+Enter inserts a newline (textarea default)
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('input-form').requestSubmit();
+  }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+/** Close setup dialog and reveal the main app. */
+function launchApp(label) {
+  document.getElementById('chat-label').textContent = `Fietsbel CE — ${label}`;
+  document.getElementById('setup-dialog').close();
+  document.getElementById('app').hidden = false;
+}
+
+/**
+ * Console utility: clear all browser-cached model files.
+ * Usage: nukeTjsCache() in DevTools → reload to re-download.
+ */
+window.nukeTjsCache = async () => {
+  if ('caches' in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+  }
+  localStorage.clear();
+  console.log('Cache cleared. Reload the page to re-download models from CDN.');
+};
+
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+if (typeof marked === 'undefined') {
+  alert('CRITICAL ERROR: marked.min.js ontbreekt.\nPlaats marked.min.js in dezelfde map als index.html.');
+}
+
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'default' });
+}
+
+// Prevent accidental Escape from closing the setup dialog mid-configuration
+document.getElementById('setup-dialog').addEventListener('cancel', e => e.preventDefault());
+
+// Open the setup modal
+document.getElementById('setup-dialog').showModal();
+</script>
 </body>
 </html>
