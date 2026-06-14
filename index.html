@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fietsbel CE — Deterministic RAG</title>
+  <title>Fietsbel CE — Cooperative, Provenance-first RAG </title>
   <!--
     Required files (next to index.html): marked.min.js
     Optional: transformers.min.js, mermaid.min.js
@@ -22,7 +22,7 @@
     html,body{height:100%;font-family:var(--sans);color:var(--text);background:var(--bg);overflow:hidden}
 
     /* ── Dialog ── */
-    dialog{border:none;padding:0;background:transparent;max-width:none}
+    dialog{border:none;padding:0;background:transparent;max-width:none;margin:auto}
     dialog::backdrop{background:rgba(255,255,255,.95)}
     .dialog-box{border:1px solid var(--border);padding:2rem;background:var(--pane-bg);
       border-radius:6px;width:500px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
@@ -317,7 +317,7 @@
 
 <script>
 /* =========================================================================
- * Fietsbel CE — Deterministic RAG Chat + Template Document Builder
+ * Fietsbel CE — cooperative provenance-first RAG Chat + Template Document Builder
  *
  * External files: marked.min.js (required), transformers.min.js (optional),
  *                 mermaid.min.js (optional)
@@ -343,7 +343,15 @@
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const Config = Object.freeze({
-  CHUNK_MAX_CHARS:          1400,
+  // Body chunk size budget. Reserves headroom for the heading-breadcrumb
+  // prefix (added on top of the body) so total chunk size stays under the
+  // 512-token limit of multilingual embedders (e.g. nomic-embed-text-v2-moe,
+  // used via LM Studio/llama.cpp for better Dutch performance). At ~3.5-4
+  // chars/token for Dutch, 512 tokens ≈ 1800-2000 chars; 1100 body + ~200-300
+  // breadcrumb stays comfortably under that even with nested headings.
+  // nomic-embed-text-v1.5 (Browser AI / TJS) has an 8192-token context, so
+  // this budget is conservative there too — no downside.
+  CHUNK_MAX_CHARS:          1100,
   CHUNK_SLICE:              1000,
   CHUNK_OVERLAP:             200,
   // If structural chunking produces ≤2 chunks averaging above this size,
@@ -358,7 +366,138 @@ const Config = Object.freeze({
   CHUNK_EXPAND_MAX:           15,   // max context chunks after neighbour expansion
   EMBED_BATCH_SIZE:           16,   // texts per embedding API request (API backends)
   EXACT_PHRASE_BONUS:        0.015, // post-RRF bonus for verbatim multi-word phrase
+  // Valid Pass 0 answer_shape values. Anything else (e.g. a model echoing
+  // the enum list itself, like "vergelijking|algemeen|concepts") is treated
+  // as a Pass 0 parse failure and falls back to 'algemeen'.
+  ANSWER_SHAPES: ['regelgeving','procedure','definitie','bedrag','termijn','vergelijking','algemeen'],
 });
+
+// ── PROMPTS ───────────────────────────────────────────────────────────────────
+/**
+ * Every LLM prompt template, in one place, as plain functions returning
+ * {system, user} (or a system-only string for Doc's eval rubric).
+ *
+ * Used identically by Pipeline (chat) and Doc (template builder) — there is
+ * exactly ONE Pass 0, ONE Pass 1, ONE Pass 2, ONE Pass 3 template. Backend
+ * differences (LM Studio / llama.cpp / Browser AI) affect only HOW these are
+ * sent (streaming vs blocking, repetition_penalty, etc — see Backends), never
+ * WHAT is sent. If Pass 2 behaves differently across backends, the prompt is
+ * provably identical — the difference is in Backends' request parameters.
+ */
+const Prompts = {
+  /** Pass 0 — neutral query decomposition. Returns {system, user}. */
+  pass0(text, ctx, thesHint) {
+    return {
+      system:
+        'You decompose questions into retrieval targets. DO NOT answer or judge permissibility.\n\n'+
+        'Output JSON only:\n'+
+        '{"search_terms":["key nouns, codes"],'+
+        '"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen",'+
+        '"likely_contains":["concepts a complete answer would cite"]}\n\n'+
+        'EXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint,
+      user: ctx+'Question: '+text+'\n\nDecompose (JSON only):',
+    };
+  },
+
+  /**
+   * Pass 1 — JSON decision system prompt. Shared by Pipeline (chat) and
+   * Doc.runPromptBlock (template builder) — same context format, same
+   * output schema, same citation rules.
+   *
+   * Explicitly instructs the model to cite ALL chunks that contributed,
+   * not just the single most relevant one — narrow questions with a small
+   * model otherwise tend to cite only one chunk even when several were
+   * used as context.
+   */
+  pass1System(fileNames) {
+    const ex = fileNames[0] || 'document.md';
+    return 'You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.\n\n'+
+      'Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]\n\n'+
+      'Output valid JSON only. No markdown. Start with { end with }.\n'+
+      '{"decision":"<phrase>","state_update":{"intent":"<intent>","user_facts":[],"facts_gathered":[]},'+
+      '"citations":[{"document":"'+ex+'","chunkId":"'+ex+'_3"}]}\n\n'+
+      'Rules: no reply field. user_facts from question. facts_gathered from context. Copy chunkId exactly. '+
+      'IMPORTANT: citations should list EVERY context chunk that contributed to your decision or facts_gathered — '+
+      'not just the single most relevant one. If 3 chunks were useful, cite all 3.';
+  },
+
+  /** Pass 1 — user message (context + question). Shared by chat and Doc. */
+  pass1User(context, question) {
+    return context+'\nQuestion: '+question;
+  },
+
+  /**
+   * Pass 2 — streaming answer. Returns {system, user}.
+   * IDENTICAL across all backends — see Backends for per-backend request params.
+   */
+  pass2(decision, context, question, langInstr, shapeHint) {
+    return {
+      system: 'You are a practical assistant. '+langInstr+shapeHint+' Use markdown. Be concise.',
+      user: (decision?'Decision: '+decision+'\n\n':'')+context+'\n\nQuestion: '+question+
+        '\n\nWrite a practical markdown answer:',
+    };
+  },
+
+  /**
+   * Pass 3 — compression + follow-up questions. Returns {system, user}.
+   *
+   * Instruction is placed at the END of the user message, immediately
+   * before generation. Small models attend much more reliably to an
+   * instruction that comes right before they start writing than to one
+   * stated at the top of a long prompt — with the draft answer (often
+   * several hundred words) in between, models tend to pattern-match to
+   * "continue the conversation" rather than "compress this specific text".
+   */
+  pass3(question, intentCtx, accFacts, answerShape, draftAnswer, langInstr, lang) {
+    return {
+      system: 'You compress text and generate follow-up questions on request. '+langInstr,
+      user:
+        'Original question: '+question+'\n\n'+
+        'Context: '+intentCtx+'. Known facts: '+accFacts+'. Answer type: '+answerShape+'.\n\n'+
+        'TEXT TO COMPRESS:\n'+draftAnswer+'\n\n'+
+        '---\n'+
+        'Now do exactly this, based ONLY on the TEXT TO COMPRESS above:\n\n'+
+        '[SHORT ANSWER]\n'+
+        'Summarize the TEXT TO COMPRESS in 2-3 sentences. '+langInstr+' No bullet points, no headers.\n\n'+
+        '[FOLLOW-UP]\n'+
+        'Write exactly 2 short follow-up questions (one per line, each starting with ">"), in '+lang+', '+
+        'that build on the specific content of the TEXT TO COMPRESS above.',
+    };
+  },
+
+  /** Doc prompt block — research compilation (replaces chat Pass 2 for document mode). */
+  docResearch(decision, context, question) {
+    return {
+      system: 'You are a thorough research assistant. Compile all relevant information from the context. '+
+        'Be comprehensive and factual.',
+      user: (decision?'Decision: '+decision+'\n\n':'')+context+'\n\nResearch question: '+question+
+        '\n\nCompile findings:',
+    };
+  },
+
+  /** Doc prompt block — rewrite pass (replaces chat Pass 3 for document mode). */
+  docRewrite(rewriteInstr, findings) {
+    return {
+      system: 'You are a professional document writer. Transform research findings into polished document '+
+        'prose. Output only the document text, no meta-commentary.',
+      user: 'Writing instruction: '+rewriteInstr+'\n\nResearch findings:\n'+findings+
+        '\n\nWrite the document section:',
+    };
+  },
+
+  /** Doc evaluation block — one rubric row. Returns {system, user}. */
+  docEvalRow(row, scopeText, context) {
+    return {
+      system: 'You are a strict document quality evaluator. Output ONLY the requested format.',
+      user: 'Evaluate the following text on the rubric criterion below.\n\n'+
+        (context?'REFERENCE CONTEXT:\n'+context:'')+'TEXT TO EVALUATE:\n'+scopeText+'\n\n'+
+        'RUBRIC:\nAspect: '+row.title+'\nDescription: '+row.description+'\n'+
+        '★ (barely passing): '+row.onestar+'\n★★ (good): '+row.twostar+'\n★★★ (excellent): '+row.threestar+'\n\n'+
+        'Output format exactly: **'+row.title+' ★N** — [one-sentence motivation]\n'+
+        'Replace N with 1, 2, or 3. Be honest and critical.',
+    };
+  },
+};
 
 // ── STATE ──────────────────────────────────────────────────────────────────────
 const State = {
@@ -390,6 +529,8 @@ const State = {
   // Document builder
   docRunning:        false,
   docStopRequested:  false,
+  docResults:        {},   // Map<blockKey, outputText> — populated from localStorage on launch
+  docProvenance:     [],   // [{type, model, embedModel, chunkIds, inputWords, outputWords, stars, ts}]
 };
 
 // ── MODULE: Cache ──────────────────────────────────────────────────────────────
@@ -663,8 +804,15 @@ const Backends = {
     async inferStreamSSE(messages, onChunk) {
       const res = await fetch(State.chatUrl+'/v1/chat/completions', {
         method:'POST', headers:{'Content-Type':'application/json'},
+        // NOTE: repetition_penalty intentionally omitted here. On some
+        // llama.cpp builds, repetition_penalty > 1.1 combined with
+        // stream:true has caused premature stop after a single token
+        // (observed: Pass 2 returning only "process"). Pass 1/3 use
+        // inferJSON with repetition_penalty:1.1 without this issue, so
+        // the streaming + higher-penalty combination is the suspect.
+        // temperature aligned with the working non-streaming passes.
         body:JSON.stringify({model:State.chatModel,messages,
-          temperature:0.2,max_tokens:1024,repetition_penalty:1.15,stream:true}),
+          temperature:0.3,max_tokens:1024,stream:true}),
       });
       if (!res.ok) { const e2=await res.json().catch(()=>({})); throw new Error(e2.error?.message||`API error ${res.status}`); }
       const reader=res.body.getReader(), decoder=new TextDecoder();
@@ -1004,17 +1152,21 @@ const Pipeline = {
       ? '\nAvailable vocabulary: '+Array.from(State.thesaurus.entries())
           .filter(([k,v])=>k===v.term.toLowerCase()).map(([,v])=>v.term).slice(0,40).join(', ')
       : '';
+    const p0prompt = Prompts.pass0(text, ctx, thesHint);
     const msgs=[
-      {role:'system',content:'You decompose questions into retrieval targets. DO NOT answer or judge permissibility.\n\nOutput JSON only:\n{"search_terms":["key nouns, codes"],"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen","likely_contains":["concepts a complete answer would cite"]}\n\nEXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint},
-      {role:'user',content:ctx+'Question: '+text+'\n\nDecompose (JSON only):'},
+      {role:'system',content:p0prompt.system},
+      {role:'user',content:p0prompt.user},
     ];
     try {
       const raw=await Backends.inferJSON(msgs,Config.PASS0_MAX_TOKENS,0.0);
       const clean=raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
       const parsed=JSON.parse(clean);
+      const shape = Config.ANSWER_SHAPES.includes(parsed.answer_shape) ? parsed.answer_shape : 'algemeen';
+      if (parsed.answer_shape && shape==='algemeen' && parsed.answer_shape!=='algemeen')
+        console.warn('[Pass 0] Invalid answer_shape "'+parsed.answer_shape+'" — falling back to algemeen. Raw:', raw);
       return {
         search_terms:Array.isArray(parsed.search_terms)?parsed.search_terms:[],
-        answer_shape:typeof parsed.answer_shape==='string'?parsed.answer_shape:'algemeen',
+        answer_shape:shape,
         likely_contains:Array.isArray(parsed.likely_contains)?parsed.likely_contains:[],
       };
     } catch(e) {
@@ -1068,7 +1220,7 @@ const Pipeline = {
   /** Pass 1 JSON decision with one retry on parse failure. Returns parsed object or null. */
   async decide(text, chunks, status) {
     return this.phase(status, '🧠 Beslissing nemen (pass 1)...', async () => {
-      const msgs = [...State.chatHistory, {role:'user',content:this.buildContext(chunks)+'\nQuestion: '+text}];
+      const msgs = [...State.chatHistory, {role:'user',content:Prompts.pass1User(this.buildContext(chunks), text)}];
       let raw = await Backends.inferJSON(msgs, 400, 0.0);
       let parsed = extractJSON(raw);
       if (!parsed) {
@@ -1092,7 +1244,7 @@ const Pipeline = {
 
     const aug = [...chunks, ...extras.slice(0, Config.RETRIEVAL_TOP_K)];
     const retryMsgs = [...State.chatHistory, {role:'user',content:
-      this.buildContext(aug)+'\nQuestion: '+text+'\n\n['+extras.length+' extra chunks via full-corpus scan]'}];
+      Prompts.pass1User(this.buildContext(aug), text)+'\n\n['+extras.length+' extra chunks via full-corpus scan]'}];
     const rp = extractJSON(await Backends.inferJSON(retryMsgs, 400, 0.0));
     if (rp?.citations?.length) {
       State.lastChunks = aug;
@@ -1129,6 +1281,14 @@ const Pipeline = {
         UI.clearHighlights(); parsed.citations.forEach(c=>{if(c.chunkId) UI.highlightChunk(c.chunkId);});
       }
 
+      // Diagnostic: compare chunks retrieved vs chunks cited by Pass 1.
+      // A narrow question + a small model often cites fewer chunks than
+      // were actually placed in context — this is Pass 1's choice, not a
+      // retrieval limitation (retrieval always returns up to RETRIEVAL_TOP_K).
+      console.log('[Pass 1] chunks in context:', chunks.length,
+        '— chunks cited:', parsed.citations?.length || 0,
+        chunks.map(c=>c.id), '→ cited:', (parsed.citations||[]).map(c=>c.chunkId));
+
       // ── Pass 2: streaming reply ──────────────────────────────────────────
       status.remove();
       const p2status=State.backend==='lmstudio'?UI.showStatus('✍️ Antwoord opstellen (pass 2)...'):null;
@@ -1141,9 +1301,10 @@ const Pipeline = {
       thinking.append(thinkingSummary); history.append(thinking);
       const bubble=UI.createBubble(thinking);
       const shapeHint=p0.answer_shape&&p0.answer_shape!=='algemeen'?' Expected: '+p0.answer_shape+'.':'';
+      const p2prompt = Prompts.pass2(parsed.decision, this.buildContext(chunks), text, langInstr, shapeHint);
       await Backends.inferStream([
-        {role:'system',content:'You are a practical assistant. '+langInstr+shapeHint+' Use markdown. Be concise.'},
-        {role:'user',content:(parsed.decision?'Decision: '+parsed.decision+'\n\n':'')+this.buildContext(chunks)+'\n\nQuestion: '+text+'\n\nWrite a practical markdown answer:'},
+        {role:'system',content:p2prompt.system},
+        {role:'user',content:p2prompt.user},
       ],chunk=>bubble.append(chunk));
       if (p2status) p2status.remove();
       const replyText=bubble.finalize(parsed.citations||[]);
@@ -1155,12 +1316,15 @@ const Pipeline = {
         ? 'Prior: '+State.jsonState.intent_history.join(' → ')+' → '+State.jsonState.intent
         : 'Current: '+(State.jsonState.intent||'unknown');
       let p3text='';
+      const p3status = UI.showStatus('💬 Samenvatting & vervolgvragen (pass 3)...');
       try {
+        const p3prompt = Prompts.pass3(text, intentCtx, accFacts, p0.answer_shape, replyText, langInstr, lang);
         p3text=await Backends.inferJSON([
-          {role:'system',content:'Compress the draft answer.\n[SHORT ANSWER]\n2-3 sentences. '+langInstr+' No bullets.\n\n[FOLLOW-UP]\nExactly 2 short questions (> prefix) in '+lang+'.'},
-          {role:'user',content:'Q: '+text+'\n\n- '+intentCtx+'\n- Facts: '+accFacts+'\n- Shape: '+p0.answer_shape+'\n\nDraft:\n'+replyText+'\n\nRewrite:'},
+          {role:'system',content:p3prompt.system},
+          {role:'user',content:p3prompt.user},
         ],300,0.3);
       } catch(e3) { console.warn('Pass 3 failed:',e3); }
+      p3status.remove();
 
       if (p3text.trim()) {
         const p3el=document.createElement('div'); p3el.className='msg bot pass3-block';
@@ -1325,22 +1489,24 @@ const Doc = {
     const chunks=await Retrieval.search(retrieval,expanded,null);
     const context=Pipeline.buildContext(chunks);
 
-    const p1msgs=[{role:'system',content:sysPrompt},{role:'user',content:context+'\nQuestion: '+retrieval}];
+    const p1msgs=[{role:'system',content:sysPrompt},{role:'user',content:Prompts.pass1User(context, retrieval)}];
     let p1raw=await Backends.inferJSON(p1msgs,400,0.0);
     let parsed=extractJSON(p1raw)||{};
     if (!parsed.decision) { p1raw=await Backends.inferJSON(p1msgs,400,0.0); parsed=extractJSON(p1raw)||{}; }
 
     let p2text='';
+    const researchPrompt = Prompts.docResearch(parsed.decision, context, retrieval);
     await Backends.inferStream([
-      {role:'system',content:'You are a thorough research assistant. Compile all relevant information from the context. Be comprehensive and factual.'},
-      {role:'user',content:(parsed.decision?'Decision: '+parsed.decision+'\n\n':'')+context+'\n\nResearch question: '+retrieval+'\n\nCompile findings:'},
+      {role:'system',content:researchPrompt.system},
+      {role:'user',content:researchPrompt.user},
     ],chunk=>{p2text+=chunk;});
 
     const rewriteInstr=rewrite||'Write a clear, professional document section based on the research findings.';
     let outputText='';
+    const rewritePrompt = Prompts.docRewrite(rewriteInstr, p2text);
     await Backends.inferStream([
-      {role:'system',content:'You are a professional document writer. Transform research findings into polished document prose. Output only the document text, no meta-commentary.'},
-      {role:'user',content:'Writing instruction: '+rewriteInstr+'\n\nResearch findings:\n'+p2text+'\n\nWrite the document section:'},
+      {role:'system',content:rewritePrompt.system},
+      {role:'user',content:rewritePrompt.user},
     ],chunk=>{outputText+=chunk; if(onChunk) onChunk(outputText);});
 
     const chunkIds=(parsed.citations||[]).map(c=>c.chunkId).filter(Boolean);
@@ -1371,17 +1537,10 @@ const Doc = {
         context=Pipeline.buildContext(chunks)+'\n\n';
       }
 
-      const rowPrompt=
-        'Evaluate the following text on the rubric criterion below.\n\n'+
-        (context?'REFERENCE CONTEXT:\n'+context:'')+'TEXT TO EVALUATE:\n'+scopeText+'\n\n'+
-        'RUBRIC:\nAspect: '+row.title+'\nDescription: '+row.description+'\n'+
-        '★ (barely passing): '+row.onestar+'\n★★ (good): '+row.twostar+'\n★★★ (excellent): '+row.threestar+'\n\n'+
-        'Output format exactly: **'+row.title+' ★N** — [one-sentence motivation]\n'+
-        'Replace N with 1, 2, or 3. Be honest and critical.';
-
+      const rowPrompt = Prompts.docEvalRow(row, scopeText, context);
       const result=await Backends.inferJSON([
-        {role:'system',content:'You are a strict document quality evaluator. Output ONLY the requested format.'},
-        {role:'user',content:rowPrompt},
+        {role:'system',content:rowPrompt.system},
+        {role:'user',content:rowPrompt.user},
       ],120,0.1);
 
       const numMatch=result.match(/★(\d)/); const starStr=(result.match(/★+/g)||[])[0]||'★';
@@ -1642,12 +1801,7 @@ const Setup = {
     prog('✓ Modellen geladen!',100);
   },
   buildSystemPrompt(fileNames) {
-    const ex=fileNames[0]||'document.md';
-    return 'You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.\n\n'+
-      'Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]\n\n'+
-      'Output valid JSON only. No markdown. Start with { end with }.\n'+
-      '{"decision":"<phrase>","state_update":{"intent":"<intent>","user_facts":[],"facts_gathered":[]},"citations":[{"document":"'+ex+'","chunkId":"'+ex+'_3"}]}\n\n'+
-      'Rules: no reply field. user_facts from question. facts_gathered from context. Copy chunkId exactly.';
+    return Prompts.pass1System(fileNames);
   },
   async ingestFiles(files) {
     const isThes=f=>/thesaurus/i.test(f.name);
@@ -1927,7 +2081,8 @@ function launchApp(label) {
   document.getElementById('setup-dialog').close();
   document.getElementById('app').hidden=false;
 
-  // Restore template from localStorage
+  // Restore template + results from localStorage
+  Doc.loadResults();
   const savedDoc=Doc.load();
   if (savedDoc) {
     document.getElementById('doc-source').value=savedDoc;
