@@ -5,17 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fietsbel CE — Deterministic RAG</title>
   <!--
-    Required files (place next to this index.html):
-      marked.min.js        — markdown parser
-      transformers.min.js  — optional, loaded on demand for Browser AI
-      mermaid.min.js       — optional, diagram rendering
-
-    Optional upload:
-      thesaurus.md         — synonym expansion + answer wikification
-                             Format: ## Term / **Definitie:** ... / **Synoniemen:** a, b
+    Required files (next to index.html): marked.min.js
+    Optional: transformers.min.js, mermaid.min.js
+    Optional upload: thesaurus.md, template.md
   -->
   <script src="marked.min.js"></script>
-  <script src="mermaid.min.js" onerror="console.info('mermaid.min.js not found')"></script>
+  <script src="mermaid.min.js" onerror="console.info('mermaid not found')"></script>
   <style>
     :root {
       --bg:#f9f9f9; --pane-bg:#fff; --text:#222; --border:#d0d0d0;
@@ -25,13 +20,15 @@
     }
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     html,body{height:100%;font-family:var(--sans);color:var(--text);background:var(--bg);overflow:hidden}
+
+    /* ── Dialog ── */
     dialog{border:none;padding:0;background:transparent;max-width:none}
     dialog::backdrop{background:rgba(255,255,255,.95)}
     .dialog-box{border:1px solid var(--border);padding:2rem;background:var(--pane-bg);
-      border-radius:6px;width:460px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
+      border-radius:6px;width:500px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
     .dialog-box h2{font-size:1.2rem;margin-bottom:.5rem}
     .dialog-box .sub{color:var(--muted);font-size:.88rem;margin-bottom:1.5rem;line-height:1.45}
-    .field{margin-bottom:1rem}
+    .field{margin-bottom:.8rem}
     .field label{display:block;font-size:.78rem;font-weight:700;margin-bottom:.3rem;
       text-transform:uppercase;color:var(--muted)}
     select,input[type=file],input[type=text]{width:100%;padding:.5rem;font-family:var(--sans);
@@ -45,13 +42,59 @@
     progress::-webkit-progress-bar{background:#eee;border-radius:4px}
     progress::-webkit-progress-value{background:var(--primary);transition:width .2s}
     progress::-moz-progress-bar{background:var(--primary)}
-    #app{display:grid;grid-template-columns:1fr 1fr;height:100vh}
+    .url-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+
+    /* ── App: flex column, mode tabs on top ── */
+    #app{display:flex;flex-direction:column;height:100vh}
     #app[hidden]{display:none!important}
+
+    /* ── Mode tab bar ── */
+    #mode-bar{flex-shrink:0;display:flex;background:#ebebeb;border-bottom:2px solid var(--border)}
+    .mode-tab{width:auto;margin:0;padding:.5rem 1.3rem;background:transparent;color:var(--muted);
+      border:none;border-bottom:2px solid transparent;margin-bottom:-2px;border-radius:0;
+      font-size:.88rem;cursor:pointer;font-weight:normal}
+    .mode-tab:hover:not(.active):not(:disabled){background:#ddd}
+    .mode-tab.active{color:var(--primary);border-bottom-color:var(--primary);
+      background:var(--pane-bg);font-weight:700}
+
+    /* ── Chat layout (existing) ── */
+    #chat-layout{flex:1;display:grid;grid-template-columns:1fr 1fr;overflow:hidden}
+    #app.doc-mode #chat-layout{display:none}
+
+    /* ── Document layout (full-width, hidden by default) ── */
+    #doc-layout{flex:1;display:none;flex-direction:column;overflow:hidden}
+    #app.doc-mode #doc-layout{display:flex}
+    #doc-toolbar{flex-shrink:0;padding:.6rem 1rem;background:#fafafa;
+      border-bottom:1px solid var(--border);display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+    #doc-toolbar button{width:auto;padding:.35rem .8rem;margin-top:0;font-size:.82rem}
+    #doc-status{font-size:.82rem;color:var(--muted);margin-left:auto}
+    #doc-split{flex:1;display:grid;grid-template-columns:40fr 60fr;overflow:hidden}
+    #doc-source{padding:1rem;border:none;border-right:1px solid var(--border);
+      font-family:var(--mono);font-size:.88rem;line-height:1.55;resize:none;
+      overflow-y:auto;background:#fafafa;color:var(--text);outline:none}
+    #doc-preview{overflow-y:auto;padding:1.5rem;font-size:.95rem;line-height:1.65}
+
+    /* Document block widgets in preview */
+    .doc-block{border:1px solid #b8cde0;border-radius:4px;margin:1rem 0;background:#f4f8ff;overflow:hidden}
+    .doc-block-header{display:flex;justify-content:space-between;align-items:center;
+      padding:.4rem .8rem;background:#d8e8f8;border-bottom:1px solid #b8cde0}
+    .doc-block-type{font-size:.74rem;font-weight:700;text-transform:uppercase;color:#446;letter-spacing:.04em}
+    .doc-run-btn{width:auto;margin:0;padding:.2rem .6rem;font-size:.78rem;border-radius:3px;background:var(--primary)}
+    .doc-block-body{padding:.5rem .8rem;font-size:.85rem;color:#444;line-height:1.5}
+    .doc-block-field{margin-bottom:.3rem}
+    .doc-eval-row{padding:.25rem 0;border-bottom:1px dotted #ccc;font-size:.82rem}
+    .doc-eval-row:last-child{border-bottom:none}
+    .doc-output{background:#f0fff4;border-left:3px solid #48bb78;padding:.8rem 1rem;
+      margin:.25rem 0 1rem;border-radius:0 4px 4px 0}
+    .doc-output-streaming{background:#fffbeb;border-left:3px solid #f6ad55;padding:.8rem 1rem;
+      margin:.25rem 0;border-radius:0 4px 4px 0;animation:pulse 1.4s ease-in-out infinite}
+
+    /* ── Pane chrome ── */
     aside{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
-    #right-pane{display:grid;grid-template-rows:35fr 65fr;overflow:hidden}
     .pane-hdr{padding:.6rem 1rem;background:#eee;border-bottom:1px solid var(--border);
       font-size:.82rem;font-weight:700;text-transform:uppercase;color:var(--muted);
       flex-shrink:0;display:flex;justify-content:space-between;align-items:center}
+    #right-pane{display:grid;grid-template-rows:35fr 65fr;overflow:hidden}
     #docs-container{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:1rem}
     article.doc-frame{border:1px solid var(--border);background:var(--pane-bg);border-radius:4px;
       display:flex;flex-direction:column;min-height:250px;max-height:45vh}
@@ -81,8 +124,6 @@
     .md-body h1{font-size:1.15rem}.md-body h2{font-size:1.05rem}.md-body h3{font-size:.97rem;color:#444}
     .md-body p{margin-bottom:.55rem}
     .md-body ul,.md-body ol{padding-left:1.4em;margin-bottom:.55rem}
-    .md-body li{margin-bottom:.2rem}
-    .md-body strong{font-weight:700}.md-body em{font-style:italic;color:#555}
     .md-body code{font-family:var(--mono);font-size:.85em;background:#e8e8e8;padding:.1em .35em;border-radius:3px}
     .md-body blockquote{border-left:3px solid var(--primary);margin:.4rem 0;
       padding:.3rem .8rem;color:#555;background:#f0f4fa;border-radius:0 4px 4px 0}
@@ -101,17 +142,13 @@
     abbr.wiki-term{cursor:help;border-bottom:1px dotted var(--primary);
       text-decoration:none;color:inherit;font-style:normal}
     abbr.wiki-term:hover{background:rgba(0,86,179,.08);border-radius:2px}
-    #restore-info{font-size:.82rem;line-height:1.8;padding:.8rem;
-      background:#f4f4f4;border-radius:4px;margin-bottom:1rem}
-    [popover]{padding:1rem;max-width:320px;font-size:.85rem;
-      border:1px solid #ccc;border-radius:6px;background:white}
+    #restore-info{font-size:.82rem;line-height:1.8;padding:.8rem;background:#f4f4f4;border-radius:4px;margin-bottom:1rem}
+    [popover]{padding:1rem;max-width:320px;font-size:.85rem;border:1px solid #ccc;border-radius:6px;background:white}
   </style>
 </head>
 <body>
 
 <dialog id="setup-dialog">
-
-  <!-- A: Restore previous session -->
   <div class="dialog-box panel" id="panel-restore" hidden>
     <h2>Fietsbel CE — Sessie herstellen</h2>
     <p class="sub">Gecachede documenten gevonden. Herstellen of nieuwe sessie starten?</p>
@@ -120,7 +157,6 @@
     <button id="btn-new-session" style="background:#888;margin-top:.5rem">✕ Nieuwe sessie starten</button>
   </div>
 
-  <!-- B: Choose backend -->
   <div class="dialog-box panel" id="panel-choice" hidden>
     <h2>Fietsbel CE — Kies backend</h2>
     <p class="sub">Selecteer de inferentiebackend voor deze sessie.</p>
@@ -129,7 +165,6 @@
     <button id="btn-choice-tjs">🌐 Browser AI — geen server nodig</button>
   </div>
 
-  <!-- C: LM Studio -->
   <div class="dialog-box panel" id="panel-lmstudio" hidden>
     <h2>Fietsbel CE — LM Studio</h2>
     <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld.</p>
@@ -150,13 +185,18 @@
     </div>
   </div>
 
-  <!-- D: llama.cpp -->
   <div class="dialog-box panel" id="panel-llamacpp" hidden>
     <h2>Fietsbel CE — llama.cpp</h2>
-    <p class="sub">Vereist llama.cpp server met CORS. Reranking via <code>/v1/rerank</code>.</p>
-    <div class="field"><label>API Endpoint</label>
-      <input type="text" id="llama-url" value="http://127.0.0.1:8080"></div>
-    <button id="btn-llama-connect">Verbind met llama.cpp</button>
+    <p class="sub">Elke service kan op een eigen poort draaien. Vul de URL in per functie.</p>
+    <div class="url-grid">
+      <div class="field"><label>Chat / LLM URL</label>
+        <input type="text" id="llama-chat-url" value="http://127.0.0.1:8082"></div>
+      <div class="field"><label>Embedding URL</label>
+        <input type="text" id="llama-embed-url" value="http://127.0.0.1:8080"></div>
+      <div class="field"><label>Reranker URL (optioneel)</label>
+        <input type="text" id="llama-rerank-url" value="http://127.0.0.1:8081"></div>
+    </div>
+    <button id="btn-llama-connect">Verbind met alle poorten</button>
     <div id="llama-model-selects" hidden style="margin-top:1.5rem">
       <div class="field"><label>Chat Model</label><select id="llama-chat"></select></div>
       <div class="field"><label>Embedding Model</label><select id="llama-embed"></select></div>
@@ -172,7 +212,6 @@
     </div>
   </div>
 
-  <!-- E: Transformers.js -->
   <div class="dialog-box panel" id="panel-transformers" hidden>
     <h2>Fietsbel CE — Browser AI</h2>
     <p class="sub">Modellen worden van HuggingFace CDN gedownload en gecached.</p>
@@ -193,116 +232,145 @@
     </div>
   </div>
 
-  <!-- F: Loading / embedding progress -->
   <div class="dialog-box panel" id="panel-loading" hidden>
     <h2>Documenten laden...</h2>
     <p id="load-text" style="font-size:.85rem;color:var(--muted);margin-bottom:.5rem">Verwerken...</p>
     <progress id="load-bar" max="100" value="0"></progress>
   </div>
-
 </dialog>
 
+
 <main id="app" hidden>
-  <aside id="docs-pane">
-    <header class="pane-hdr">
-      Document Viewer
-      <button type="button" id="clear-docs-btn"
-        title="Wis gecachede documenten en herstart"
-        style="all:unset;cursor:pointer;font-size:.75rem;color:var(--muted);
-               padding:.15rem .5rem;border-radius:3px;border:1px solid var(--border);
-               background:white;font-weight:normal">🗑 Wissen</button>
-    </header>
-    <div id="docs-container"></div>
-  </aside>
-  <div id="right-pane">
-    <section id="state-section">
-      <header class="pane-hdr">Actuele Situatie, Intentie &amp; Redenering (JSON)</header>
-      <output id="state-output" role="status">{
+
+  <!-- ── Mode tab bar ── -->
+  <nav id="mode-bar">
+    <button class="mode-tab active" id="tab-chat">💬 Chat &amp; Documenten</button>
+    <button class="mode-tab"        id="tab-doc">📄 Template Editor</button>
+  </nav>
+
+  <!-- ── Chat layout ── -->
+  <div id="chat-layout">
+    <aside id="docs-pane">
+      <header class="pane-hdr">
+        Document Viewer
+        <button type="button" id="clear-docs-btn"
+          title="Wis gecachede documenten en herstart"
+          style="all:unset;cursor:pointer;font-size:.75rem;color:var(--muted);
+                 padding:.15rem .5rem;border-radius:3px;border:1px solid var(--border);
+                 background:white;font-weight:normal">🗑 Wissen</button>
+      </header>
+      <div id="docs-container"></div>
+    </aside>
+    <div id="right-pane">
+      <section id="state-section">
+        <header class="pane-hdr">Actuele Situatie, Intentie &amp; Redenering (JSON)</header>
+        <output id="state-output" role="status">{
   "status": "Wachtend op invoer..."
 }</output>
-    </section>
-    <section id="chat-section">
-      <header class="pane-hdr" id="chat-label">Fietsbel CE — Multidisciplinair Overleg</header>
-      <div id="chat-history" role="log" aria-live="polite"></div>
-      <form id="input-form" autocomplete="off">
-        <textarea id="chat-input" rows="2"
-          placeholder="Stel een vraag over de documenten..."></textarea>
-        <button type="button" id="new-search-btn"
-          title="Nieuwe zoekopdracht — hergebruikt vorige chunks niet"
-          style="background:#888">🔍</button>
-        <button type="submit" id="send-btn">Stuur</button>
-      </form>
-    </section>
+      </section>
+      <section id="chat-section">
+        <header class="pane-hdr" id="chat-label">Fietsbel CE — Multidisciplinair Overleg</header>
+        <div id="chat-history" role="log" aria-live="polite"></div>
+        <form id="input-form" autocomplete="off">
+          <textarea id="chat-input" rows="2" placeholder="Stel een vraag over de documenten..."></textarea>
+          <button type="button" id="new-search-btn"
+            title="Nieuwe zoekopdracht" style="background:#888">🔍</button>
+          <button type="submit" id="send-btn">Stuur</button>
+        </form>
+      </section>
+    </div>
   </div>
+
+  <!-- ── Document layout ── -->
+  <div id="doc-layout">
+    <div id="doc-toolbar">
+      <strong style="font-size:.82rem;color:var(--muted)">📄 Template</strong>
+      <label style="font-size:.82rem;color:var(--muted);margin:0">
+        <input type="file" id="template-upload" accept=".md"
+          style="font-size:.78rem;padding:.2rem">
+      </label>
+      <button id="doc-play-all" type="button">▶▶ Alles uitvoeren</button>
+      <button id="doc-stop"     type="button" disabled style="background:#888">⏹ Stop</button>
+      <button id="doc-download" type="button" style="background:#555">⬇ Download .md</button>
+      <span id="doc-status"></span>
+    </div>
+    <div id="doc-split">
+      <textarea id="doc-source"
+        placeholder="Upload template.md of begin hier te typen...&#10;&#10;Gebruik:&#10;  ```prompt&#10;  retrieval: wat zoeken&#10;  rewrite: hoe schrijven&#10;  ```&#10;&#10;  ```evaluation&#10;  | Aspect | Beschrijving | 1★ | 2★ | 3★ |&#10;  ```"></textarea>
+      <div id="doc-preview"></div>
+    </div>
+  </div>
+
 </main>
 
 <div id="md-hint" popover>
-  <strong>Goede Markdown voor slimme chunking:</strong><br><br>
-  ✅ Gebruik koppen (# ## ###) voor elk onderwerp<br>
-  ✅ Één onderwerp per sectie, korte alinea's<br>
-  ✅ Lijsten voor opsommingen<br><br>
-  ❌ Geen lange alinea's zonder koppen<br>
-  ❌ Geen tabellen als primaire structuur<br><br>
-  <strong>thesaurus.md (optioneel):</strong><br>
-  Upload naast je documenten. Format:<br>
-  <code>## Term</code><br>
-  <code>**Definitie:** ...</code><br>
-  <code>**Synoniemen:** a, b, c</code>
+  <strong>Markdown tips:</strong><br><br>
+  ✅ Koppen (# ## ###) per onderwerp<br>
+  ✅ Korte alinea's<br><br>
+  <strong>thesaurus.md:</strong> upload voor synoniemexpansie.<br>
+  Format: <code>## Term / **Definitie:** ... / **Synoniemen:** a, b</code><br><br>
+  <strong>template.md:</strong> gebruik in de 📄 tab.<br>
+  <code>```prompt&#10;retrieval: ...&#10;rewrite: ...&#10;```</code><br>
+  <code>```evaluation&#10;| Aspect | Desc | 1★ | 2★ | 3★ |&#10;```</code>
 </div>
+
 
 <script>
 /* =========================================================================
- * Fietsbel CE — Deterministic RAG Chat
+ * Fietsbel CE — Deterministic RAG Chat + Template Document Builder
  *
- * External files (place next to index.html):
- *   marked.min.js        required  — markdown parser
- *   transformers.min.js  optional  — loaded on demand for Browser AI
- *   mermaid.min.js       optional  — diagram rendering
+ * External files: marked.min.js (required), transformers.min.js (optional),
+ *                 mermaid.min.js (optional)
+ * Optional uploads: thesaurus.md, template.md
  *
- * Optional upload: thesaurus.md
- *
- * Pipeline (per turn):
- *   Pass 0  — pre-retrieval neutral query decomposition
- *   Retrieval — RRF (semantic + keyword + heading signals), optional rerank
- *   Pass 1  — JSON decision; retries once on parse failure
- *   Absence — keyword scan across all chunks if no citations found
- *   Pass 2  — streaming markdown reply (with neighbour chunk expansion)
- *   Wikify  — annotate thesaurus terms in reply
+ * Chat pipeline per turn:
+ *   Pass 0  — neutral query decomposition
+ *   Retrieval — RRF (semantic + keyword + heading), optional rerank
+ *   Pass 1  — JSON decision; retry once on parse failure
+ *   Absence — keyword scan if no citations found
+ *   Pass 2  — streaming markdown reply with neighbour chunk expansion
+ *   Wikify  — annotate thesaurus terms
  *   Pass 3  — compression + follow-up questions
  *
+ * Document builder:
+ *   prompt block     — retrieval (passes 0-2) + custom rewrite (replaces pass 3)
+ *   evaluation block — per-row rubric eval; optional do-rag per row
+ *   output block     — generated / editable content; replaced on re-run
+ *
  * Modules: Config, State, Cache, Chunker, Backends, Retrieval, Thesaurus,
- *           UI, NLP, Pipeline, Setup, Events, Init
+ *           UI, NLP, Pipeline, Doc, Setup, Events, Init
  * =========================================================================*/
-
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const Config = Object.freeze({
   CHUNK_MAX_CHARS:          1400,
   CHUNK_SLICE:              1000,
   CHUNK_OVERLAP:             200,
+  // If structural chunking produces ≤2 chunks averaging above this size,
+  // the document likely has no usable headings/paragraph breaks ("dirty file").
+  // Fall back to overlapping fixed-size slices for better retrieval granularity.
+  CHUNK_DIRTY_THRESHOLD:    2500,
   RETRIEVAL_CANDIDATES:       12,
   RETRIEVAL_TOP_K:             5,
   HISTORY_MAX_TURNS:           8,
   PASS0_MAX_TOKENS:          160,
-  // Reciprocal Rank Fusion constant. Higher k = gentler rank weighting.
-  // 60 is the standard default value from the original RRF paper.
-  RRF_K:                      60,
-  // Max context chunks after neighbour expansion (≈ RETRIEVAL_TOP_K × 3)
-  CHUNK_EXPAND_MAX:           15,
-  // Max texts per embedding API request (API backends only; TJS is always sequential)
-  EMBED_BATCH_SIZE:           16,
-  // Bonus added to RRF score for exact multi-word phrase match (post-fusion)
-  EXACT_PHRASE_BONUS:        0.015,
+  RRF_K:                      60,   // Reciprocal Rank Fusion constant
+  CHUNK_EXPAND_MAX:           15,   // max context chunks after neighbour expansion
+  EMBED_BATCH_SIZE:           16,   // texts per embedding API request (API backends)
+  EXACT_PHRASE_BONUS:        0.015, // post-RRF bonus for verbatim multi-word phrase
 });
-
 
 // ── STATE ──────────────────────────────────────────────────────────────────────
 const State = {
-  backend:      null,
-  url:          'http://127.0.0.1:1234',
-  chatModel:    '',
-  embedModel:   '',
-  rerankModel:  '',
+  backend:     null,    // 'lmstudio' | 'llamacpp' | 'transformers'
+  // Per-function URLs — for LM Studio all three are equal;
+  // for llama.cpp each can point to a different port.
+  chatUrl:     'http://127.0.0.1:1234',
+  embedUrl:    'http://127.0.0.1:1234',
+  rerankUrl:   'http://127.0.0.1:1234',
+  chatModel:   '',
+  embedModel:  '',
+  rerankModel: '',
 
   tjsTokenizer:       null,
   tjsEmbedModel:      null,
@@ -312,43 +380,31 @@ const State = {
   tjsMath:            null,
   TextStreamer:       null,
 
-  // Each chunk: {id, docName, text, vector, prevId, nextId}
-  chunks:         [],
+  chunks:         [],   // [{id, docName, text, vector, prevId, nextId}]
   chatHistory:    [],
   jsonState:      { intent: 'Onbekend', facts_gathered: [] },
   lastChunks:     null,
   forceNewSearch: false,
-  thesaurus:      null,   // Map<string, {term, definition, synonyms}> or null
+  thesaurus:      null,
+
+  // Document builder
+  docRunning:        false,
+  docStopRequested:  false,
 };
 
-
 // ── MODULE: Cache ──────────────────────────────────────────────────────────────
-/**
- * IndexedDB persistence for chunks, file texts, and session config.
- * Enables instant restore across page reloads without re-embedding.
- *
- * Schema:
- *   files   — {name, text}           full markdown source per document
- *   chunks  — {id, docName, text, vector, prevId, nextId}
- *   session — keyed 'config', stores backend info + file names + thesaurus
- *
- * Note: cached vectors are only valid for the same embedding model.
- * If the user switches backends/models, start a new session (🗑 Wissen).
- */
 const Cache = {
-  DB_NAME:    'fietsbel-ce',
-  DB_VERSION: 1,
-  _db:        null,
+  DB_NAME: 'fietsbel-ce', DB_VERSION: 1, _db: null,
 
   async open() {
     if (this._db) return this._db;
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(this.DB_NAME, this.DB_VERSION);
       req.onupgradeneeded = ({ target: { result: db } }) => {
-        if (!db.objectStoreNames.contains('files'))
-          db.createObjectStore('files',   { keyPath: 'name' });
-        if (!db.objectStoreNames.contains('chunks'))
-          db.createObjectStore('chunks',  { keyPath: 'id' });
+        ['files','chunks'].forEach(s => {
+          if (!db.objectStoreNames.contains(s))
+            db.createObjectStore(s, { keyPath: s === 'chunks' ? 'id' : 'name' });
+        });
         if (!db.objectStoreNames.contains('session'))
           db.createObjectStore('session');
       };
@@ -356,288 +412,274 @@ const Cache = {
       req.onerror    = ({ target: { error } })      => reject(error);
     });
   },
-
   async _put(store, value, key) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
       const req = key !== undefined
-        ? db.transaction(store, 'readwrite').objectStore(store).put(value, key)
-        : db.transaction(store, 'readwrite').objectStore(store).put(value);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror   = () => reject(req.error);
+        ? db.transaction(store,'readwrite').objectStore(store).put(value, key)
+        : db.transaction(store,'readwrite').objectStore(store).put(value);
+      req.onsuccess = () => resolve(); req.onerror = () => reject(req.error);
     });
   },
-
   async _get(store, key) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const req = db.transaction(store, 'readonly').objectStore(store).get(key);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror   = () => reject(req.error);
+      const req = db.transaction(store,'readonly').objectStore(store).get(key);
+      req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
     });
   },
-
   async _getAll(store) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
-      req.onsuccess = () => resolve(req.result);
-      req.onerror   = () => reject(req.error);
+      const req = db.transaction(store,'readonly').objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
     });
   },
-
   async clear() {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['files', 'chunks', 'session'], 'readwrite');
-      ['files', 'chunks', 'session'].forEach(s => tx.objectStore(s).clear());
-      tx.oncomplete = () => resolve();
-      tx.onerror    = () => reject(tx.error);
+      const tx = db.transaction(['files','chunks','session'],'readwrite');
+      ['files','chunks','session'].forEach(s => tx.objectStore(s).clear());
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
     });
   },
-
   async saveSession(cfg) { return this._put('session', { ...cfg, savedAt: Date.now() }, 'config'); },
   async loadSession()    { return this._get('session', 'config'); },
   async saveFile(name, text) { return this._put('files', { name, text }); },
   async loadFiles()      { return this._getAll('files'); },
-
-  /** Save all chunks (replaces previous set in one transaction). */
   async saveChunks(chunks) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction('chunks', 'readwrite');
+      const tx = db.transaction('chunks','readwrite');
       const store = tx.objectStore('chunks');
       store.clear();
       chunks.forEach(c => store.put({
         id: c.id, docName: c.docName, text: c.text,
-        vector: Array.from(c.vector),   // typed arrays → plain array for structured clone
-        prevId: c.prevId ?? null,
-        nextId: c.nextId ?? null,
+        vector: Array.from(c.vector),
+        prevId: c.prevId ?? null, nextId: c.nextId ?? null,
       }));
-      tx.oncomplete = () => resolve();
-      tx.onerror    = () => reject(tx.error);
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
     });
   },
-
   async loadChunks() { return this._getAll('chunks'); },
 };
 
-
 // ── MODULE: Chunker ────────────────────────────────────────────────────────────
 const Chunker = {
-  chunk(text, filename) {
-    if (typeof marked === 'undefined' || !marked.lexer) {
-      return text.split(/\n\s*\n/).filter(c => c.trim().length > 20)
-        .map((t, i) => ({ id: `${filename}_${i}`, text: t.trim() }));
+  /**
+   * Fallback for "dirty" files: no usable heading/paragraph structure.
+   * Fixed-size overlapping slices of raw text, no markdown-awareness.
+   * This is the safety net — clean, heading-structured markdown is strongly
+   * preferred and produces much better retrieval (see md-hint popover).
+   */
+  chunkFallback(text, filename) {
+    const { CHUNK_SLICE: S, CHUNK_OVERLAP: O } = Config;
+    const chunks = [];
+    let idx = 0;
+    for (let s = 0; s < text.length; s += (S - O)) {
+      const slice = text.slice(s, s + S).trim();
+      if (slice.length > 20) chunks.push({ id: `${filename}_${idx++}`, text: slice });
+      if (s + S >= text.length) break;
     }
-    const tokens   = marked.lexer(text);
-    const chunks   = [];
-    let   idx      = 0;
-    const hStack   = ['', '', ''];
-    let   bodyToks = [];
-    const accLen   = () => bodyToks.reduce((s, t) => s + (t.raw || '').length, 0);
-    const flush    = () => {
-      const body = bodyToks.map(t => t.raw || '').join('').trim();
-      if (body.length < 20) { bodyToks = []; return; }
-      const crumb = hStack.map((h, i) => h ? '#'.repeat(i + 1) + ' ' + h : null)
+    if (!chunks.length && text.trim()) chunks.push({ id: `${filename}_0`, text: text.trim() });
+    return chunks;
+  },
+
+  chunk(text, filename) {
+    if (typeof marked === 'undefined' || !marked.lexer) return this.chunkFallback(text, filename);
+
+    const tokens = marked.lexer(text), chunks = [];
+    let idx = 0, hStack = ['','',''], bodyToks = [];
+    const accLen = () => bodyToks.reduce((s,t) => s+(t.raw||'').length, 0);
+    const flush  = () => {
+      const body = bodyToks.map(t=>t.raw||'').join('').trim();
+      if (body.length < 20) { bodyToks=[]; return; }
+      const crumb = hStack.map((h,i) => h ? '#'.repeat(i+1)+' '+h : null)
         .filter(Boolean).join('\n');
-      chunks.push({ id: `${filename}_${idx++}`, text: crumb ? crumb + '\n\n' + body : body });
-      bodyToks = [];
+      chunks.push({ id:`${filename}_${idx++}`, text: crumb ? crumb+'\n\n'+body : body });
+      bodyToks=[];
     };
     for (const tok of tokens) {
-      if (tok.type === 'heading' && tok.depth <= 3) {
+      if (tok.type==='heading' && tok.depth<=3) {
         if (bodyToks.length) flush();
-        hStack[tok.depth - 1] = tok.text || '';
-        for (let d = tok.depth; d < 3; d++) hStack[d] = '';
+        hStack[tok.depth-1] = tok.text||'';
+        for (let d=tok.depth; d<3; d++) hStack[d]='';
       } else {
-        const raw = tok.raw || '';
-        if (raw.length > 1200) {
-          const { CHUNK_SLICE: S, CHUNK_OVERLAP: O } = Config;
-          for (let s = 0; s < raw.length; s += S - O) {
-            const slice = raw.slice(s, s + S);
-            bodyToks.push({ ...tok, raw: slice, text: slice });
-            if (accLen() > Config.CHUNK_MAX_CHARS) flush();
+        const raw = tok.raw||'';
+        if (raw.length > Config.CHUNK_MAX_CHARS) {
+          // Oversized single token (typically: no blank lines to split on).
+          // Flush any pending accumulator first, then slice this token directly
+          // with overlap — bypasses the accumulator entirely so chunk sizes
+          // and overlap stay correct regardless of token size.
+          if (bodyToks.length) flush();
+          const {CHUNK_SLICE:S,CHUNK_OVERLAP:O} = Config;
+          const crumb = hStack.map((h,i)=>h?'#'.repeat(i+1)+' '+h:null).filter(Boolean).join('\n');
+          for (let s=0; s<raw.length; s+=(S-O)) {
+            const slice=raw.slice(s,s+S).trim();
+            if (slice.length>20)
+              chunks.push({ id:`${filename}_${idx++}`, text: crumb?crumb+'\n\n'+slice:slice });
+            if (s+S>=raw.length) break;
           }
         } else {
           bodyToks.push(tok);
-          if (accLen() > Config.CHUNK_MAX_CHARS) flush();
+          if (accLen()>Config.CHUNK_MAX_CHARS) flush();
         }
       }
     }
     flush();
-    if (!chunks.length && text.trim()) chunks.push({ id: `${filename}_0`, text: text.trim() });
+
+    if (!chunks.length) return this.chunkFallback(text, filename);
+
+    // Dirty-file heuristic: structural chunking produced very few, very large
+    // chunks — likely a wall of text with no headings or blank lines at all.
+    // Overlapping fixed-size slices give better retrieval granularity than
+    // one or two giant chunks.
+    const avgLen = chunks.reduce((s,c)=>s+c.text.length,0) / chunks.length;
+    if (chunks.length <= 2 && text.length > Config.CHUNK_DIRTY_THRESHOLD
+        && avgLen > Config.CHUNK_DIRTY_THRESHOLD) {
+      console.warn(`[Chunker] "${filename}" produced ${chunks.length} oversized chunk(s) ` +
+        `(avg ${Math.round(avgLen)} chars) — falling back to overlapping slices. ` +
+        `Add headings/blank lines for smarter chunking (see ⓘ).`);
+      return this.chunkFallback(text, filename);
+    }
+
     return chunks;
   },
 };
 
-
 // ── MODULE: Backends ───────────────────────────────────────────────────────────
 const Backends = {
-  async embed(text, role = 'document') {
-    return State.backend === 'transformers'
-      ? this._tjs.embed(text, role) : this._api.embed(text, role);
+  async embed(text, role='document') {
+    return State.backend==='transformers' ? this._tjs.embed(text,role) : this._api.embed(text,role);
   },
-
-  /**
-   * Batch embedding — sends multiple texts in a single API request.
-   * For TJS: falls back to sequential (WASM/WebGPU memory constraints).
-   * For API backends: array input to /v1/embeddings, results sorted by index.
-   */
-  async embedBatch(texts, role = 'document') {
-    if (State.backend === 'transformers') {
-      const results = [];
-      for (const t of texts) results.push(await this._tjs.embed(t, role));
-      return results;
+  async embedBatch(texts, role='document') {
+    if (State.backend==='transformers') {
+      const r=[]; for (const t of texts) r.push(await this._tjs.embed(t,role)); return r;
     }
     return this._api.embedBatch(texts, role);
   },
-
   async rerank(query, candidates) {
-    if (State.backend === 'transformers') return this._tjs.rerank(query, candidates);
-    if (State.backend === 'llamacpp')     return this._api.rerank(query, candidates);
+    if (State.backend==='transformers') return this._tjs.rerank(query,candidates);
+    if (State.backend==='llamacpp')     return this._api.rerank(query,candidates);
     return candidates;
   },
-
-  async inferJSON(messages, maxTokens = 400, temperature = 0.0) {
-    return State.backend === 'transformers'
-      ? this._tjs.inferJSON(messages, maxTokens)
-      : this._api.inferJSON(messages, maxTokens, temperature);
+  async inferJSON(messages, maxTokens=400, temperature=0.0) {
+    return State.backend==='transformers'
+      ? this._tjs.inferJSON(messages,maxTokens)
+      : this._api.inferJSON(messages,maxTokens,temperature);
   },
-
   async inferStream(messages, onChunk) {
-    if (State.backend === 'transformers') return this._tjs.inferStream(messages, onChunk);
-    if (State.backend === 'llamacpp')     return this._api.inferStreamSSE(messages, onChunk);
-    const full = await this._api.inferJSON(messages, 1024, 0.2);
-    onChunk(full);
-    return full;
+    if (State.backend==='transformers') return this._tjs.inferStream(messages,onChunk);
+    if (State.backend==='llamacpp')     return this._api.inferStreamSSE(messages,onChunk);
+    const full = await this._api.inferJSON(messages,1024,0.2); onChunk(full); return full;
   },
 
   _tjs: {
     async embed(text, role) {
-      const prefix = role === 'query' ? 'search_query: ' : 'search_document: ';
-      const inputs = State.tjsTokenizer(prefix + text,
-        { padding: true, truncation: true, max_length: 512 });
-      const { last_hidden_state } = await State.tjsEmbedModel(inputs);
-      let emb = State.tjsMath.mean_pooling(last_hidden_state, inputs.attention_mask);
-      emb = State.tjsMath.layer_norm(emb, [emb.dims[1]]);
-      return emb.normalize(2, -1).tolist()[0];
+      const pfx = role==='query' ? 'search_query: ' : 'search_document: ';
+      const inp = State.tjsTokenizer(pfx+text, {padding:true,truncation:true,max_length:512});
+      const {last_hidden_state} = await State.tjsEmbedModel(inp);
+      let emb = State.tjsMath.mean_pooling(last_hidden_state, inp.attention_mask);
+      emb = State.tjsMath.layer_norm(emb,[emb.dims[1]]);
+      return emb.normalize(2,-1).tolist()[0];
     },
     async rerank(query, candidates) {
-      if (!State.tjsRerankModel || !State.tjsRerankTokenizer) return candidates;
+      if (!State.tjsRerankModel||!State.tjsRerankTokenizer) return candidates;
       try {
-        const sigmoid = x => 1 / (1 + Math.exp(-x));
-        const inputs = State.tjsRerankTokenizer(
-          candidates.map(() => query),
-          { text_pair: candidates.map(c => c.text), padding: true, truncation: true, max_length: 512 }
+        const sigmoid = x => 1/(1+Math.exp(-x));
+        const inp = State.tjsRerankTokenizer(
+          candidates.map(()=>query),
+          {text_pair:candidates.map(c=>c.text),padding:true,truncation:true,max_length:512}
         );
-        const { logits } = await State.tjsRerankModel(inputs);
-        return candidates.map((c, i) => ({ ...c, score: sigmoid(Array.from(logits.data)[i]) }))
-          .sort((a, b) => b.score - a.score);
-      } catch (e) {
-        console.warn('TJS reranker failed, using RRF order:', e);
-        return candidates;
-      }
+        const {logits} = await State.tjsRerankModel(inp);
+        return candidates.map((c,i) => ({...c,score:sigmoid(Array.from(logits.data)[i])}))
+          .sort((a,b)=>b.score-a.score);
+      } catch(e) { console.warn('TJS reranker failed:',e); return candidates; }
     },
-    async inferJSON(messages, maxTokens = 400) {
+    async inferJSON(messages, maxTokens=400) {
       const out = await State.tjsLLMPipeline(messages,
-        { max_new_tokens: maxTokens, do_sample: false, repetition_penalty: 1.1 });
+        {max_new_tokens:maxTokens,do_sample:false,repetition_penalty:1.1});
       const gen = out[0].generated_text;
-      return Array.isArray(gen) ? (gen.at(-1).content ?? '') : String(gen);
+      return Array.isArray(gen) ? (gen.at(-1).content??'') : String(gen);
     },
     async inferStream(messages, onChunk) {
-      const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer, {
-        skip_prompt: true, skip_special_tokens: true,
-        callback_function: t => onChunk && onChunk(t),
-      });
+      const streamer = new State.TextStreamer(State.tjsLLMPipeline.tokenizer,
+        {skip_prompt:true,skip_special_tokens:true,callback_function:t=>onChunk&&onChunk(t)});
       const out = await State.tjsLLMPipeline(messages,
-        { max_new_tokens: 1024, do_sample: false, repetition_penalty: 1.15, streamer });
+        {max_new_tokens:1024,do_sample:false,repetition_penalty:1.15,streamer});
       const gen = out[0].generated_text;
-      return Array.isArray(gen) ? (gen.at(-1).content ?? '') : String(gen);
+      return Array.isArray(gen) ? (gen.at(-1).content??'') : String(gen);
     },
   },
 
   _api: {
-    _prefix(role) {
-      const isNomic = State.embedModel.toLowerCase().includes('nomic');
-      return isNomic ? (role === 'query' ? 'search_query: ' : 'search_document: ') : '';
+    _pfx(role) {
+      const n = State.embedModel.toLowerCase().includes('nomic');
+      return n ? (role==='query' ? 'search_query: ' : 'search_document: ') : '';
     },
     async embed(text, role) {
-      const res  = await fetch(`${State.url}/v1/embeddings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: State.embedModel, input: this._prefix(role) + text }),
+      const res = await fetch(State.embedUrl+'/v1/embeddings', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:State.embedModel,input:this._pfx(role)+text}),
       });
       return (await res.json()).data[0].embedding;
     },
     async embedBatch(texts, role) {
-      const pfx  = this._prefix(role);
-      const res  = await fetch(`${State.url}/v1/embeddings`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: State.embedModel, input: texts.map(t => pfx + t) }),
+      const pfx = this._pfx(role);
+      const res = await fetch(State.embedUrl+'/v1/embeddings', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:State.embedModel,input:texts.map(t=>pfx+t)}),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || `Embedding API error ${res.status}`);
-      if (data.data.length !== texts.length)
-        throw new Error(`Embedding API: expected ${texts.length} vectors, got ${data.data.length}`);
-      // Sort by index — OpenAI spec does not guarantee order
-      return data.data.sort((a, b) => a.index - b.index).map(d => d.embedding);
+      if (!res.ok) throw new Error(data.error?.message||`Embedding error ${res.status}`);
+      if (data.data.length!==texts.length)
+        throw new Error(`Embedding API: expected ${texts.length}, got ${data.data.length}`);
+      return data.data.sort((a,b)=>a.index-b.index).map(d=>d.embedding);
     },
     async rerank(query, candidates) {
       if (!State.rerankModel) return candidates;
       try {
-        const res = await fetch(`${State.url}/v1/rerank`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: State.rerankModel, query,
-            documents: candidates.map(c => c.text), top_n: candidates.length,
-          }),
+        const res = await fetch(State.rerankUrl+'/v1/rerank', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({model:State.rerankModel,query,
+            documents:candidates.map(c=>c.text),top_n:candidates.length}),
         });
         if (!res.ok) throw new Error(`Rerank HTTP ${res.status}`);
         return (await res.json()).results
-          .sort((a, b) => b.relevance_score - a.relevance_score)
-          .map(r => ({ ...candidates[r.index], score: r.relevance_score }));
-      } catch (e) {
-        console.warn('API reranker failed, using RRF order:', e);
-        return candidates;
-      }
+          .sort((a,b)=>b.relevance_score-a.relevance_score)
+          .map(r=>({...candidates[r.index],score:r.relevance_score}));
+      } catch(e) { console.warn('API reranker failed:',e); return candidates; }
     },
-    async inferJSON(messages, maxTokens = 400, temperature = 0.0) {
-      const res = await fetch(`${State.url}/v1/chat/completions`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: State.chatModel, messages, temperature,
-          max_tokens: maxTokens, repetition_penalty: 1.1,
-        }),
+    async inferJSON(messages, maxTokens=400, temperature=0.0) {
+      const res = await fetch(State.chatUrl+'/v1/chat/completions', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:State.chatModel,messages,temperature,
+          max_tokens:maxTokens,repetition_penalty:1.1}),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || `API error ${res.status}`);
+      if (!res.ok) throw new Error(data.error?.message||`API error ${res.status}`);
       return data.choices[0].message.content;
     },
     async inferStreamSSE(messages, onChunk) {
-      const res = await fetch(`${State.url}/v1/chat/completions`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: State.chatModel, messages,
-          temperature: 0.2, max_tokens: 1024, repetition_penalty: 1.15, stream: true,
-        }),
+      const res = await fetch(State.chatUrl+'/v1/chat/completions', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:State.chatModel,messages,
+          temperature:0.2,max_tokens:1024,repetition_penalty:1.15,stream:true}),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `API error ${res.status}`);
-      }
-      const reader = res.body.getReader(), decoder = new TextDecoder();
-      let buf = '', accumulated = '';
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n'); buf = lines.pop();
+      if (!res.ok) { const e2=await res.json().catch(()=>({})); throw new Error(e2.error?.message||`API error ${res.status}`); }
+      const reader=res.body.getReader(), decoder=new TextDecoder();
+      let buf='', accumulated='';
+      for(;;) {
+        const {done,value} = await reader.read(); if (done) break;
+        buf += decoder.decode(value,{stream:true});
+        const lines=buf.split('\n'); buf=lines.pop();
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6).trim();
-          if (payload === '[DONE]') return accumulated;
+          const payload=line.slice(6).trim();
+          if (payload==='[DONE]') return accumulated;
           try {
-            const delta = JSON.parse(payload).choices?.[0]?.delta?.content;
-            if (delta) { accumulated += delta; onChunk(delta); }
+            const delta=JSON.parse(payload).choices?.[0]?.delta?.content;
+            if (delta) { accumulated+=delta; onChunk(delta); }
           } catch {}
         }
       }
@@ -646,1131 +688,1282 @@ const Backends = {
   },
 };
 
-
 // ── MODULE: Retrieval ──────────────────────────────────────────────────────────
 const Retrieval = {
-  cosine(a, b) {
-    let dot = 0, na = 0, nb = 0;
-    for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]**2; nb += b[i]**2; }
-    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  cosine(a,b) {
+    let dot=0,na=0,nb=0;
+    for (let i=0;i<a.length;i++) { dot+=a[i]*b[i]; na+=a[i]**2; nb+=b[i]**2; }
+    return dot/(Math.sqrt(na)*Math.sqrt(nb));
   },
-
-  tokenize(query) {
-    return query.toLowerCase().match(/[\wÀ-ÿ]{2,}/g) || [];
+  tokenize(q) { return q.toLowerCase().match(/[\wÀ-ÿ]{2,}/g)||[]; },
+  keywordScore(text,terms) {
+    const lower=text.toLowerCase();
+    const hits=terms.filter(t=>lower.includes(t)).length;
+    return terms.length ? hits/terms.length : 0;
   },
-
-  /** BM25-light: fraction of query terms found in text. */
-  keywordScore(text, terms) {
-    const lower = text.toLowerCase();
-    const hits  = terms.filter(t => lower.includes(t)).length;
-    return terms.length ? hits / terms.length : 0;
+  headingMatchScore(text,terms) {
+    const h=text.split('\n').filter(l=>/^#{1,3}\s/.test(l.trimStart())).join(' ').toLowerCase();
+    if (!h) return 0;
+    const hits=terms.filter(t=>t.length>=2&&h.includes(t)).length;
+    return terms.length ? hits/terms.length : 0;
   },
-
-  /** Heading-specific match score: terms found only in H1/H2 lines. */
-  headingMatchScore(text, terms) {
-    const headings = text.split('\n')
-      .filter(l => /^#{1,3}\s/.test(l.trimStart())).join(' ').toLowerCase();
-    if (!headings) return 0;
-    const hits = terms.filter(t => t.length >= 2 && headings.includes(t)).length;
-    return terms.length ? hits / terms.length : 0;
+  exactPhraseBonus(text,phrases) {
+    const lower=text.toLowerCase();
+    return phrases.filter(p=>p.includes(' ')&&lower.includes(p)).length*Config.EXACT_PHRASE_BONUS;
   },
-
-  /** Additive post-RRF bonus for verbatim multi-word phrases. */
-  exactPhraseBonus(text, phrases) {
-    const lower = text.toLowerCase();
-    return phrases.filter(p => p.includes(' ') && lower.includes(p)).length
-      * Config.EXACT_PHRASE_BONUS;
-  },
-
-  /**
-   * Reciprocal Rank Fusion retrieval.
-   *
-   * Three independent signals ranked separately:
-   *   1. Semantic similarity (cosine)
-   *   2. Keyword overlap (BM25-light over expanded terms)
-   *   3. Heading match (terms in H1/H2 lines specifically)
-   *
-   * Combined via RRF: score = Σ 1/(K + rank_i)
-   * Scale-invariant — no tuning needed between signals.
-   * Exact phrase bonus added as a small post-fusion reward.
-   *
-   * @param {string}   query
-   * @param {string[]} expandedTerms  — from Pass 0 + thesaurus expansion
-   * @param {Function} onPhase        — 'embed' | 'hybrid' | 'rerank'
-   */
-  async search(query, expandedTerms = [], onPhase) {
+  async search(query, expandedTerms=[], onPhase) {
     const baseTerms = this.tokenize(query);
     const allTerms  = expandedTerms.length
-      ? [...new Set([...baseTerms,
-          ...expandedTerms.flatMap(t => [t.toLowerCase(), ...this.tokenize(t)])])]
+      ? [...new Set([...baseTerms,...expandedTerms.flatMap(t=>[t.toLowerCase(),...this.tokenize(t)])])]
       : baseTerms;
-    const phrases = expandedTerms.filter(t => t.includes(' ')).map(t => t.toLowerCase());
+    const phrases = expandedTerms.filter(t=>t.includes(' ')).map(t=>t.toLowerCase());
 
     if (onPhase) onPhase('embed');
-    const qVec = await Backends.embed(query, 'query');
+    const qVec = await Backends.embed(query,'query');
 
     if (onPhase) onPhase('hybrid');
+    const bySem = [...State.chunks].map(c=>({id:c.id,s:this.cosine(qVec,c.vector)})).sort((a,b)=>b.s-a.s);
+    const byKw  = [...State.chunks].map(c=>({id:c.id,s:this.keywordScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
+    const byHd  = [...State.chunks].map(c=>({id:c.id,s:this.headingMatchScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
 
-    // Three independent ranked lists (rank 0 = best)
-    const bySemantic = [...State.chunks]
-      .map(c => ({ id: c.id, s: this.cosine(qVec, c.vector) }))
-      .sort((a, b) => b.s - a.s);
-    const byKeyword  = [...State.chunks]
-      .map(c => ({ id: c.id, s: this.keywordScore(c.text, allTerms) }))
-      .sort((a, b) => b.s - a.s);
-    const byHeading  = [...State.chunks]
-      .map(c => ({ id: c.id, s: this.headingMatchScore(c.text, allTerms) }))
-      .sort((a, b) => b.s - a.s);
+    const semR=new Map(bySem.map((c,i)=>[c.id,i]));
+    const kwR =new Map(byKw.map((c,i) =>[c.id,i]));
+    const hdR =new Map(byHd.map((c,i) =>[c.id,i]));
+    const N=State.chunks.length, K=Config.RRF_K;
 
-    const semRank = new Map(bySemantic.map((c, i) => [c.id, i]));
-    const kwRank  = new Map(byKeyword.map((c,  i) => [c.id, i]));
-    const hdRank  = new Map(byHeading.map((c,  i) => [c.id, i]));
-    const N       = State.chunks.length;
-    const K       = Config.RRF_K;
-
-    let candidates = State.chunks.map(c => ({
+    let cands = State.chunks.map(c=>({
       ...c,
-      score: 1 / (K + (semRank.get(c.id) ?? N))
-           + 1 / (K + (kwRank.get(c.id)  ?? N))
-           + 1 / (K + (hdRank.get(c.id)  ?? N))
-           + this.exactPhraseBonus(c.text, phrases),
+      score: 1/(K+(semR.get(c.id)??N)) + 1/(K+(kwR.get(c.id)??N)) + 1/(K+(hdR.get(c.id)??N))
+           + this.exactPhraseBonus(c.text,phrases),
     }));
-    candidates.sort((a, b) => b.score - a.score);
-    candidates = candidates.slice(0, Config.RETRIEVAL_CANDIDATES);
+    cands.sort((a,b)=>b.score-a.score);
+    cands = cands.slice(0,Config.RETRIEVAL_CANDIDATES);
 
-    const hasReranker = State.backend === 'transformers'
-      ? (State.tjsRerankModel && State.tjsRerankTokenizer)
-      : (State.backend === 'llamacpp' && !!State.rerankModel);
-    if (hasReranker) {
-      if (onPhase) onPhase('rerank');
-      candidates = await Backends.rerank(query, candidates);
-    }
-
-    return candidates.slice(0, Config.RETRIEVAL_TOP_K);
+    const hasReranker = State.backend==='transformers'
+      ? (State.tjsRerankModel&&State.tjsRerankTokenizer)
+      : (State.backend==='llamacpp'&&!!State.rerankModel);
+    if (hasReranker) { if (onPhase) onPhase('rerank'); cands=await Backends.rerank(query,cands); }
+    return cands.slice(0,Config.RETRIEVAL_TOP_K);
   },
-
-  /**
-   * Absence verification: scans all chunks for expanded terms outside
-   * the already-retrieved set. Used to distinguish retrieval miss from
-   * genuine corpus absence.
-   */
-  checkAbsence(terms, alreadyFetched = []) {
+  checkAbsence(terms, alreadyFetched=[]) {
     if (!terms?.length) return [];
-    const fetchedIds = new Set(alreadyFetched.map(c => c.id));
-    const lower      = terms.filter(t => t.length >= 3).map(t => t.toLowerCase());
-    return State.chunks
-      .filter(c => !fetchedIds.has(c.id) && lower.some(t => c.text.toLowerCase().includes(t)))
-      .slice(0, Config.RETRIEVAL_CANDIDATES);
+    const ids=new Set(alreadyFetched.map(c=>c.id));
+    const lower=terms.filter(t=>t.length>=3).map(t=>t.toLowerCase());
+    return State.chunks.filter(c=>!ids.has(c.id)&&lower.some(t=>c.text.toLowerCase().includes(t)))
+      .slice(0,Config.RETRIEVAL_CANDIDATES);
   },
 };
-
 
 // ── MODULE: Thesaurus ─────────────────────────────────────────────────────────
 const Thesaurus = {
   parse(text) {
-    const map      = new Map();
-    const sections = text.split(/^## /m).slice(1);
-    for (const section of sections) {
-      const lines      = section.split('\n');
-      const term       = lines[0].trim();
+    const map=new Map();
+    for (const section of text.split(/^## /m).slice(1)) {
+      const lines=section.split('\n'), term=lines[0].trim();
       if (!term) continue;
-      let definition = '', synonyms = [], seeAlso = [];
+      let definition='', synonyms=[], seeAlso=[];
       for (const line of lines.slice(1)) {
-        const def = line.match(/\*\*Definitie:\*\*\s*(.+)/i);
-        const syn = line.match(/\*\*Synoniemen:\*\*\s*(.+)/i);
-        const see = line.match(/\*\*Zie ook:\*\*\s*(.+)/i);
-        if (def) definition = def[1].trim();
-        if (syn) synonyms   = syn[1].split(',').map(s => s.trim()).filter(Boolean);
-        if (see) seeAlso    = see[1].split(',').map(s => s.trim()).filter(Boolean);
+        const def=line.match(/\*\*Definitie:\*\*\s*(.+)/i);
+        const syn=line.match(/\*\*Synoniemen:\*\*\s*(.+)/i);
+        const see=line.match(/\*\*Zie ook:\*\*\s*(.+)/i);
+        if (def) definition=def[1].trim();
+        if (syn) synonyms=syn[1].split(',').map(s=>s.trim()).filter(Boolean);
+        if (see) seeAlso=see[1].split(',').map(s=>s.trim()).filter(Boolean);
       }
-      const entry = { term, definition, synonyms, seeAlso };
-      map.set(term.toLowerCase(), entry);
-      synonyms.forEach(s => { if (!map.has(s.toLowerCase())) map.set(s.toLowerCase(), entry); });
+      const entry={term,definition,synonyms,seeAlso};
+      map.set(term.toLowerCase(),entry);
+      synonyms.forEach(s=>{ if (!map.has(s.toLowerCase())) map.set(s.toLowerCase(),entry); });
     }
     return map;
   },
-
   expandTerms(terms) {
     if (!State.thesaurus) return terms;
-    const expanded = new Set(terms.map(t => t.toLowerCase()));
+    const expanded=new Set(terms.map(t=>t.toLowerCase()));
     for (const term of terms) {
-      const entry = State.thesaurus.get(term.toLowerCase());
-      if (entry) {
-        entry.synonyms.forEach(s => expanded.add(s.toLowerCase()));
-        expanded.add(entry.term.toLowerCase());
-      }
+      const entry=State.thesaurus.get(term.toLowerCase());
+      if (entry) { entry.synonyms.forEach(s=>expanded.add(s.toLowerCase())); expanded.add(entry.term.toLowerCase()); }
     }
     return Array.from(expanded);
   },
-
   wikify(container) {
     if (!State.thesaurus) return;
-    const entries = Array.from(State.thesaurus.entries())
-      .filter(([k, v]) => k === v.term.toLowerCase() && v.definition)
-      .map(([, v]) => v)
-      .sort((a, b) => b.term.length - a.term.length);
+    const entries=Array.from(State.thesaurus.entries())
+      .filter(([k,v])=>k===v.term.toLowerCase()&&v.definition)
+      .map(([,v])=>v).sort((a,b)=>b.term.length-a.term.length);
     if (!entries.length) return;
-    const SKIP = new Set(['ABBR', 'A', 'CODE', 'PRE', 'SCRIPT', 'STYLE']);
-
-    const walkNode = node => {
-      const children = Array.from(node.childNodes);
+    const SKIP=new Set(['ABBR','A','CODE','PRE','SCRIPT','STYLE']);
+    const walkNode=node => {
+      const children=Array.from(node.childNodes);
       for (const child of children) {
-        if (child.nodeType === Node.TEXT_NODE) {
+        if (child.nodeType===Node.TEXT_NODE) {
           if (SKIP.has(child.parentElement?.tagName)) continue;
-          const original = child.textContent;
-          if (!original.trim()) continue;
-          for (const { term, definition } of entries) {
-            const re = new RegExp('\\b' + escapeRegex(term) + '\\b', 'gi');
+          const original=child.textContent; if (!original.trim()) continue;
+          for (const {term,definition} of entries) {
+            const re=new RegExp('\\b'+escapeRegex(term)+'\\b','gi');
             if (!re.test(original)) continue;
-            const frag = document.createDocumentFragment();
-            let last = 0; re.lastIndex = 0;
-            let match;
-            while ((match = re.exec(original)) !== null) {
-              if (match.index > last)
-                frag.append(document.createTextNode(original.slice(last, match.index)));
-              const abbr = document.createElement('abbr');
-              abbr.className = 'wiki-term'; abbr.title = definition;
-              abbr.textContent = match[0]; frag.append(abbr);
-              last = match.index + match[0].length;
+            const frag=document.createDocumentFragment();
+            let last=0; re.lastIndex=0; let match;
+            while ((match=re.exec(original))!==null) {
+              if (match.index>last) frag.append(document.createTextNode(original.slice(last,match.index)));
+              const abbr=document.createElement('abbr');
+              abbr.className='wiki-term'; abbr.title=definition; abbr.textContent=match[0];
+              frag.append(abbr); last=match.index+match[0].length;
             }
-            if (last < original.length)
-              frag.append(document.createTextNode(original.slice(last)));
-            child.parentNode.replaceChild(frag, child);
-            break;
+            if (last<original.length) frag.append(document.createTextNode(original.slice(last)));
+            child.parentNode.replaceChild(frag,child); break;
           }
-        } else if (child.nodeType === Node.ELEMENT_NODE && !SKIP.has(child.tagName)) {
-          walkNode(child);
-        }
+        } else if (child.nodeType===Node.ELEMENT_NODE&&!SKIP.has(child.tagName)) { walkNode(child); }
       }
     };
     walkNode(container);
   },
 };
 
-
 // ── MODULE: UI ─────────────────────────────────────────────────────────────────
 const UI = {
   updateState(update) {
-    const s = State.jsonState;
-    if (update?.intent && update.intent !== s.intent) {
-      if (!s.intent_history) s.intent_history = [];
-      if (s.intent && s.intent !== 'Onbekend') s.intent_history.push(s.intent);
-      s.intent = update.intent;
+    const s=State.jsonState;
+    if (update?.intent&&update.intent!==s.intent) {
+      if (!s.intent_history) s.intent_history=[];
+      if (s.intent&&s.intent!=='Onbekend') s.intent_history.push(s.intent);
+      s.intent=update.intent;
     }
-    ['facts_gathered', 'user_facts'].forEach(key => {
+    ['facts_gathered','user_facts'].forEach(key => {
       if (!Array.isArray(update?.[key])) return;
-      if (!Array.isArray(s[key])) s[key] = [];
-      update[key].forEach(f => { if (f && !s[key].includes(f)) s[key].push(f); });
+      if (!Array.isArray(s[key])) s[key]=[];
+      update[key].forEach(f=>{ if(f&&!s[key].includes(f)) s[key].push(f); });
     });
-    if (update?.decision !== undefined) {
-      if (!s.decision_history) s.decision_history = [];
+    if (update?.decision!==undefined) {
+      if (!s.decision_history) s.decision_history=[];
       if (s.current_decision) s.decision_history.push(s.current_decision);
-      s.current_decision = update.decision;
+      s.current_decision=update.decision;
     }
-    const skip = new Set(['intent','facts_gathered','user_facts','decision']);
-    Object.entries(update || {}).forEach(([k, v]) => { if (!skip.has(k)) s[k] = v; });
-    document.getElementById('state-output').textContent = JSON.stringify(s, null, 2);
+    const skip=new Set(['intent','facts_gathered','user_facts','decision']);
+    Object.entries(update||{}).forEach(([k,v])=>{ if(!skip.has(k)) s[k]=v; });
+    document.getElementById('state-output').textContent=JSON.stringify(s,null,2);
   },
-
   clearHighlights() {
-    document.querySelectorAll('mark.ai-hl').forEach(m => {
-      m.parentNode?.replaceChild(document.createTextNode(m.textContent), m);
-      m.parentNode?.normalize();
+    document.querySelectorAll('mark.ai-hl').forEach(m=>{
+      m.parentNode?.replaceChild(document.createTextNode(m.textContent),m); m.parentNode?.normalize();
     });
-    document.querySelectorAll('.chunk-block').forEach(el => { el.style.background = ''; });
+    document.querySelectorAll('.chunk-block').forEach(el=>{ el.style.background=''; });
   },
-
   highlightChunk(chunkId) {
-    const el = document.getElementById(chunkId);
-    if (!el) return;
-    el.style.background = 'var(--hl)';
-    const pane = el.closest('.doc-content');
-    if (!pane) return;
-    const offset = pane.scrollTop
-      + el.getBoundingClientRect().top - pane.getBoundingClientRect().top
-      - pane.clientHeight / 2 + el.clientHeight / 2;
-    pane.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' });
+    const el=document.getElementById(chunkId); if (!el) return;
+    el.style.background='var(--hl)';
+    const pane=el.closest('.doc-content'); if (!pane) return;
+    const offset=pane.scrollTop+el.getBoundingClientRect().top-pane.getBoundingClientRect().top
+      -pane.clientHeight/2+el.clientHeight/2;
+    pane.scrollTo({top:Math.max(0,offset),behavior:'smooth'});
   },
-
   buildChips(citations) {
-    const row = document.createElement('div');
-    row.style.marginTop = '8px';
+    const row=document.createElement('div'); row.style.marginTop='8px';
     citations.forEach(cit => {
       if (!cit.document) return;
-      const suffix = cit.chunkId ? ' #' + cit.chunkId.split('_').at(-1) : '';
-      const chip = document.createElement('span');
-      chip.className = 'citation-chip'; chip.title = cit.chunkId || cit.document;
-      chip.textContent = '📍 ' + cit.document + suffix;
-      chip.addEventListener('click', () => {
-        const isActive = chip.classList.contains('chip-active');
-        row.querySelectorAll('.chip-active').forEach(c => c.classList.remove('chip-active'));
+      const suffix=cit.chunkId?' #'+cit.chunkId.split('_').at(-1):'';
+      const chip=document.createElement('span');
+      chip.className='citation-chip'; chip.title=cit.chunkId||cit.document;
+      chip.textContent='📍 '+cit.document+suffix;
+      chip.addEventListener('click',()=>{
+        const isActive=chip.classList.contains('chip-active');
+        row.querySelectorAll('.chip-active').forEach(c=>c.classList.remove('chip-active'));
         this.clearHighlights();
-        if (!isActive) { chip.classList.add('chip-active'); if (cit.chunkId) this.highlightChunk(cit.chunkId); }
+        if (!isActive) { chip.classList.add('chip-active'); if(cit.chunkId) this.highlightChunk(cit.chunkId); }
       });
       row.append(chip);
     });
     return row;
   },
-
-  addMessage(role, text, citations = []) {
-    const history = document.getElementById('chat-history');
-    const msg = document.createElement('div');
-    msg.className = 'msg ' + role;
-    if (role === 'bot' && typeof marked !== 'undefined') {
-      const body = document.createElement('div');
-      body.className = 'md-body'; body.innerHTML = marked.parse(text); msg.append(body);
-    } else { msg.textContent = text; }
+  addMessage(role, text, citations=[]) {
+    const history=document.getElementById('chat-history');
+    const msg=document.createElement('div'); msg.className='msg '+role;
+    if (role==='bot'&&typeof marked!=='undefined') {
+      const body=document.createElement('div'); body.className='md-body';
+      body.innerHTML=marked.parse(text); msg.append(body);
+    } else { msg.textContent=text; }
     if (citations.length) msg.append(this.buildChips(citations));
-    history.append(msg); history.scrollTop = history.scrollHeight;
-    return msg;
+    history.append(msg); history.scrollTop=history.scrollHeight; return msg;
   },
-
-  createBubble(parentEl = null) {
-    const history = document.getElementById('chat-history');
-    const wrapper = parentEl ?? (() => {
-      const w = document.createElement('div'); w.className = 'msg bot';
-      history.append(w); return w;
-    })();
-    const body = document.createElement('div');
-    body.className = 'md-body streaming-cursor'; wrapper.append(body);
-    history.scrollTop = history.scrollHeight;
-    let text = '';
-    const render = () => {
-      body.innerHTML = typeof marked !== 'undefined'
-        ? marked.parse(text) : text.replace(/\n/g, '<br>');
-    };
+  createBubble(parentEl=null) {
+    const history=document.getElementById('chat-history');
+    const wrapper=parentEl??(() => { const w=document.createElement('div'); w.className='msg bot'; history.append(w); return w; })();
+    const body=document.createElement('div'); body.className='md-body streaming-cursor';
+    wrapper.append(body); history.scrollTop=history.scrollHeight;
+    let text='';
+    const render=()=>{ body.innerHTML=typeof marked!=='undefined'?marked.parse(text):text.replace(/\n/g,'<br>'); };
     return {
-      el: wrapper,
-      append(chunk) { text += chunk; render(); history.scrollTop = history.scrollHeight; },
-      finalize(citations = []) {
+      el:wrapper,
+      append(chunk){text+=chunk;render();history.scrollTop=history.scrollHeight;},
+      finalize(citations=[]){
         body.classList.remove('streaming-cursor'); render();
-        if (citations.length) wrapper.append(UI.buildChips(citations));
-        history.scrollTop = history.scrollHeight; return text;
+        if(citations.length) wrapper.append(UI.buildChips(citations));
+        history.scrollTop=history.scrollHeight; return text;
       },
-      getBody() { return body; },
+      getBody(){return body;},
     };
   },
-
   showStatus(text) {
-    const el = document.createElement('div');
-    el.className = 'msg bot streaming'; el.textContent = text;
-    const history = document.getElementById('chat-history');
-    history.append(el); history.scrollTop = history.scrollHeight;
-    return el;
+    const el=document.createElement('div'); el.className='msg bot streaming'; el.textContent=text;
+    const history=document.getElementById('chat-history');
+    history.append(el); history.scrollTop=history.scrollHeight; return el;
   },
-
   renderDocument(filename, text) {
-    const chunks  = Chunker.chunk(text, filename);
-    const content = document.createElement('div');
-    content.className = 'doc-content'; content.id = 'content-' + filename;
+    const chunks=Chunker.chunk(text,filename);
+    const content=document.createElement('div');
+    content.className='doc-content'; content.id='content-'+filename;
     chunks.forEach(c => {
-      const block = document.createElement('div');
-      block.className = 'chunk-block'; block.id = c.id;
-      block.innerHTML = marked.parse(c.text); content.append(block);
+      const block=document.createElement('div'); block.className='chunk-block'; block.id=c.id;
+      block.innerHTML=marked.parse(c.text); content.append(block);
     });
-    const frame = document.createElement('article');
-    frame.className = 'doc-frame'; frame.id = 'frame-' + filename;
-    const title = document.createElement('header');
-    title.className = 'doc-title'; title.textContent = filename;
-    frame.append(title, content);
-    document.getElementById('docs-container').append(frame);
+    const frame=document.createElement('article'); frame.className='doc-frame'; frame.id='frame-'+filename;
+    const title=document.createElement('header'); title.className='doc-title'; title.textContent=filename;
+    frame.append(title,content); document.getElementById('docs-container').append(frame);
   },
-
   renderMermaid() {
-    if (typeof mermaid === 'undefined') return;
-    document.querySelectorAll('code.language-mermaid').forEach(el => {
-      const div = document.createElement('div');
-      div.className = 'mermaid'; div.textContent = el.textContent;
-      (el.closest('pre') ?? el).replaceWith(div);
+    if (typeof mermaid==='undefined') return;
+    document.querySelectorAll('code.language-mermaid').forEach(el=>{
+      const div=document.createElement('div'); div.className='mermaid'; div.textContent=el.textContent;
+      (el.closest('pre')??el).replaceWith(div);
     });
-    mermaid.run({ querySelector: '.mermaid' });
+    mermaid.run({querySelector:'.mermaid'});
   },
 };
 
-
-// ── MODULE: NLP helpers ────────────────────────────────────────────────────────
+// ── NLP helpers ───────────────────────────────────────────────────────────────
 function detectLanguage(text) {
-  const nlWords = new Set([
-    'de','het','een','is','van','in','dat','zijn','op','aan','als','er','maar',
-    'wat','niet','voor','met','ook','dan','ik','je','ze','we','dit','die','door','heeft','wordt',
-  ]);
-  const tokens = text.toLowerCase().split(/\s+/);
-  const ratio  = tokens.filter(w => nlWords.has(w.replace(/[^a-z]/g, '')))
-                       .length / Math.max(tokens.length, 1);
-  return ratio > 0.12 ? 'Dutch' : 'English';
+  const nlWords=new Set(['de','het','een','is','van','in','dat','zijn','op','aan','als','er','maar',
+    'wat','niet','voor','met','ook','dan','ik','je','ze','we','dit','die','door','heeft','wordt']);
+  const tokens=text.toLowerCase().split(/\s+/);
+  const ratio=tokens.filter(w=>nlWords.has(w.replace(/[^a-z]/g,''))).length/Math.max(tokens.length,1);
+  return ratio>0.12 ? 'Dutch' : 'English';
 }
 
 function extractJSON(raw) {
-  let text = raw.trim()
-    .replace(/^`{3}(?:json)?\s*/i, '').replace(/\s*`{3}\s*$/, '');
-  const norm = obj => {
+  let text=raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
+  const norm=obj=>{
     if (!obj) return obj;
-    if (!obj.state_update) obj.state_update = {};
-    ['intent','user_facts','facts_gathered'].forEach(k => {
-      if (obj[k] !== undefined && obj.state_update[k] === undefined)
-        obj.state_update[k] = obj[k];
+    if (!obj.state_update) obj.state_update={};
+    ['intent','user_facts','facts_gathered'].forEach(k=>{
+      if (obj[k]!==undefined&&obj.state_update[k]===undefined) obj.state_update[k]=obj[k];
     });
     return obj;
   };
   try { return norm(JSON.parse(text)); } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
+  const m=text.match(/\{[\s\S]*\}/); if (!m) return null;
   try { return norm(JSON.parse(m[0])); } catch {}
   try {
-    const b   = m[0];
-    const str = pat => b.match(pat)?.[1];
-    const arr = pat => { try { return JSON.parse(str(pat) ?? 'null'); } catch { return null; } };
-    const obj = {
-      decision:  str(/"decision"\s*:\s*"([^"]*?)"/),
-      citations: arr(/"citations"\s*:\s*(\[[\s\S]*?\])\s*[,}]/),
-      state_update: {
-        intent:         str(/"intent"\s*:\s*"([^"]*?)"/),
-        user_facts:     arr(/"user_facts"\s*:\s*(\[[\s\S]*?\])/),
-        facts_gathered: arr(/"facts_gathered"\s*:\s*(\[[\s\S]*?\])/),
+    const b=m[0], str=pat=>b.match(pat)?.[1];
+    const arr=pat=>{ try { return JSON.parse(str(pat)??'null'); } catch { return null; } };
+    const obj={
+      decision:str(/"decision"\s*:\s*"([^"]*?)"/),
+      citations:arr(/"citations"\s*:\s*(\[[\s\S]*?\])\s*[,}]/),
+      state_update:{
+        intent:str(/"intent"\s*:\s*"([^"]*?)"/),
+        user_facts:arr(/"user_facts"\s*:\s*(\[[\s\S]*?\])/),
+        facts_gathered:arr(/"facts_gathered"\s*:\s*(\[[\s\S]*?\])/),
       },
     };
-    if (obj.decision || obj.state_update?.intent || obj.citations) return norm(obj);
+    if (obj.decision||obj.state_update?.intent||obj.citations) return norm(obj);
   } catch {}
   return null;
 }
 
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function escapeRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
+function wordCount(str) { return str.trim().split(/\s+/).filter(Boolean).length; }
 
 // ── MODULE: Pipeline ──────────────────────────────────────────────────────────
 const Pipeline = {
-  /**
-   * Build context string from retrieved + expanded neighbour chunks.
-   *
-   * Primary chunks include a Relevance score.
-   * Immediate neighbours (prevId/nextId) are appended for API backends to
-   * prevent information loss at chunk boundaries.
-   * Chunks are sorted in document reading order.
-   * TJS backend skips expansion to stay within the small context window.
-   */
   buildContext(retrievedChunks) {
-    const chunkMap   = new Map(State.chunks.map(c => [c.id, c]));
-    const contextIds = new Set(retrievedChunks.map(c => c.id));
-    const scores     = new Map(retrievedChunks.map(c => [c.id, c.score]));
-
-    if (State.backend !== 'transformers') {
-      retrievedChunks.forEach(c => {
-        if (c.prevId && chunkMap.has(c.prevId)) contextIds.add(c.prevId);
-        if (c.nextId && chunkMap.has(c.nextId)) contextIds.add(c.nextId);
+    const chunkMap=new Map(State.chunks.map(c=>[c.id,c]));
+    const contextIds=new Set(retrievedChunks.map(c=>c.id));
+    const scores=new Map(retrievedChunks.map(c=>[c.id,c.score]));
+    if (State.backend!=='transformers') {
+      retrievedChunks.forEach(c=>{
+        if (c.prevId&&chunkMap.has(c.prevId)) contextIds.add(c.prevId);
+        if (c.nextId&&chunkMap.has(c.nextId)) contextIds.add(c.nextId);
       });
     }
-
-    const ordered = Array.from(contextIds)
-      .map(id => chunkMap.get(id)).filter(Boolean)
-      .sort((a, b) => {
-        if (a.docName !== b.docName) return a.docName.localeCompare(b.docName);
-        return (parseInt(a.id.split('_').at(-1)) || 0)
-             - (parseInt(b.id.split('_').at(-1)) || 0);
-      })
-      .slice(0, Config.CHUNK_EXPAND_MAX);
-
-    return 'CONTEXT:\n' + ordered.map(c => {
-      const score = scores.has(c.id) ? ', Relevance: ' + scores.get(c.id).toFixed(2) : '';
-      return '[Doc: ' + c.docName + ', ChunkId: ' + c.id + score + ']\n' + c.text;
+    const ordered=Array.from(contextIds).map(id=>chunkMap.get(id)).filter(Boolean)
+      .sort((a,b)=>{
+        if (a.docName!==b.docName) return a.docName.localeCompare(b.docName);
+        return (parseInt(a.id.split('_').at(-1))||0)-(parseInt(b.id.split('_').at(-1))||0);
+      }).slice(0,Config.CHUNK_EXPAND_MAX);
+    return 'CONTEXT:\n'+ordered.map(c=>{
+      const score=scores.has(c.id)?', Relevance: '+scores.get(c.id).toFixed(2):'';
+      return '[Doc: '+c.docName+', ChunkId: '+c.id+score+']\n'+c.text;
     }).join('\n\n');
   },
 
-  /**
-   * Pass 0 — Neutral pre-retrieval query decomposition.
-   * Extracts search targets WITHOUT guessing or biasing the answer direction.
-   * "Can I do X?" must produce terms about X, not about whether X is allowed.
-   */
   async queryExpand(text, lang) {
-    const prevUser = State.chatHistory.filter(m => m.role === 'user').slice(-1)[0]?.content ?? '';
-    const ctx = prevUser && prevUser !== text ? 'Previous question: ' + prevUser + '\n' : '';
-    const thesHint = State.thesaurus
-      ? '\nAvailable vocabulary terms (prefer these when relevant): ' +
-        Array.from(State.thesaurus.entries())
-          .filter(([k, v]) => k === v.term.toLowerCase())
-          .map(([, v]) => v.term).slice(0, 40).join(', ')
+    const prevUser=State.chatHistory.filter(m=>m.role==='user').slice(-1)[0]?.content??'';
+    const ctx=prevUser&&prevUser!==text ? 'Previous question: '+prevUser+'\n' : '';
+    const thesHint=State.thesaurus
+      ? '\nAvailable vocabulary: '+Array.from(State.thesaurus.entries())
+          .filter(([k,v])=>k===v.term.toLowerCase()).map(([,v])=>v.term).slice(0,40).join(', ')
       : '';
-
-    const msgs = [
-      { role: 'system', content:
-        'You decompose questions into retrieval targets. DO NOT answer. DO NOT judge whether ' +
-        'something is allowed, permitted, required, or forbidden.\n\n' +
-        'Output JSON only:\n' +
-        '{"search_terms":["key nouns, codes, article refs"],' +
-        '"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen",' +
-        '"likely_contains":["concepts a complete answer would cite — what they are, not what they say"]}\n\n' +
-        'Rules:\n' +
-        '- search_terms: exact noun phrases, codes, amounts from the question.\n' +
-        '- EXCLUDE: allowed, forbidden, may, must, required, prohibited.\n' +
-        '- likely_contains: what types of facts a complete answer would need.' + thesHint },
-      { role: 'user', content: ctx + 'Question: ' + text + '\n\nDecompose for retrieval (JSON only):' },
+    const msgs=[
+      {role:'system',content:'You decompose questions into retrieval targets. DO NOT answer or judge permissibility.\n\nOutput JSON only:\n{"search_terms":["key nouns, codes"],"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen","likely_contains":["concepts a complete answer would cite"]}\n\nEXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint},
+      {role:'user',content:ctx+'Question: '+text+'\n\nDecompose (JSON only):'},
     ];
-
     try {
-      const raw    = await Backends.inferJSON(msgs, Config.PASS0_MAX_TOKENS, 0.0);
-      const clean  = raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
-      const parsed = JSON.parse(clean);
+      const raw=await Backends.inferJSON(msgs,Config.PASS0_MAX_TOKENS,0.0);
+      const clean=raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
+      const parsed=JSON.parse(clean);
       return {
-        search_terms:    Array.isArray(parsed.search_terms)    ? parsed.search_terms    : [],
-        answer_shape:    typeof parsed.answer_shape === 'string' ? parsed.answer_shape : 'algemeen',
-        likely_contains: Array.isArray(parsed.likely_contains) ? parsed.likely_contains : [],
+        search_terms:Array.isArray(parsed.search_terms)?parsed.search_terms:[],
+        answer_shape:typeof parsed.answer_shape==='string'?parsed.answer_shape:'algemeen',
+        likely_contains:Array.isArray(parsed.likely_contains)?parsed.likely_contains:[],
       };
-    } catch (e) {
-      console.warn('[Pass 0] Degrading to vanilla retrieval:', e);
-      return { search_terms: [], answer_shape: 'algemeen', likely_contains: [] };
+    } catch(e) {
+      console.warn('[Pass 0] Degrading:',e);
+      return {search_terms:[],answer_shape:'algemeen',likely_contains:[]};
     }
   },
 
-  async run(text) {
-    const history   = document.getElementById('chat-history');
-    const lang      = detectLanguage(text);
-    const langInstr = 'Respond in ' + lang + '. Match the language of the user question exactly.';
+  /** Wrap a pipeline stage: sets status text, runs fn, propagates errors with status cleanup. */
+  async phase(status, label, fn) {
+    status.textContent = label;
+    document.getElementById('chat-history').scrollTop = document.getElementById('chat-history').scrollHeight;
+    return fn();
+  },
 
-    const status = UI.showStatus('🔍 Vraag analyseren (pass 0)...');
+  /** Pass 0 + RRF retrieval (or reuse of cached chunks). Returns {p0, allExpandedTerms, chunks}. */
+  async retrieve(text, status) {
+    const history = document.getElementById('chat-history');
     let rerankTimer = null;
 
-    try {
-      // ── Pass 0: query expansion ────────────────────────────────────────────
-      const p0 = await this.queryExpand(text, lang);
-      console.log('[Pass 0]', p0);
+    const p0 = await this.phase(status, '🔍 Vraag analyseren (pass 0)...', () => this.queryExpand(text, detectLanguage(text)));
+    const allExpandedTerms = Thesaurus.expandTerms([...p0.search_terms, ...p0.likely_contains]);
 
-      const allExpandedTerms = Thesaurus.expandTerms([
-        ...p0.search_terms, ...p0.likely_contains,
-      ]);
-      console.log('[Expanded terms]', allExpandedTerms);
-
-      // ── Retrieval (RRF) ────────────────────────────────────────────────────
-      const onPhase = phase => {
-        if (phase === 'embed')  status.textContent = '🔍 Vraag inbedden...';
-        if (phase === 'hybrid') status.textContent = '🔍 RRF retrieval (semantic + keyword + heading)...';
-        if (phase === 'rerank') {
-          const t0 = Date.now();
-          status.textContent = '⚖️ Reranking (cross-encoder)...';
-          rerankTimer = setInterval(() => {
-            status.textContent = '⚖️ Reranking... ' + ((Date.now()-t0)/1000).toFixed(1) + 's';
-            history.scrollTop = history.scrollHeight;
-          }, 400);
-        }
-        history.scrollTop = history.scrollHeight;
-      };
-
-      const hasPrior = State.chatHistory.length > 1;
-      let chunks;
-      if (hasPrior && State.lastChunks && !State.forceNewSearch) {
-        chunks = State.lastChunks;
-        status.textContent = '♻️ Vorige zoekresultaten hergebruikt';
-      } else {
-        chunks = await Retrieval.search(text, allExpandedTerms, onPhase);
-        State.lastChunks = chunks;
+    const onRetrievalPhase = phase => {
+      if (phase==='embed')  status.textContent='🔍 Vraag inbedden...';
+      if (phase==='hybrid') status.textContent='🔍 RRF retrieval...';
+      if (phase==='rerank') {
+        const t0=Date.now(); status.textContent='⚖️ Reranking...';
+        rerankTimer=setInterval(()=>{
+          status.textContent='⚖️ Reranking... '+((Date.now()-t0)/1000).toFixed(1)+'s';
+          history.scrollTop=history.scrollHeight;
+        },400);
       }
-      State.forceNewSearch = false;
-      if (rerankTimer) { clearInterval(rerankTimer); rerankTimer = null; }
+      history.scrollTop=history.scrollHeight;
+    };
 
-      console.log('[RAG] Top chunks:', chunks.map(c => ({
-        id: c.id, score: c.score?.toFixed(4),
-        preview: c.text.split('\n').slice(0, 2).join(' | '),
-      })));
+    const hasPrior = State.chatHistory.length > 1;
+    let chunks;
+    if (hasPrior && State.lastChunks && !State.forceNewSearch) {
+      chunks = State.lastChunks; status.textContent = '♻️ Vorige zoekresultaten hergebruikt';
+    } else {
+      chunks = await Retrieval.search(text, allExpandedTerms, onRetrievalPhase);
+      State.lastChunks = chunks;
+    }
+    State.forceNewSearch = false;
+    if (rerankTimer) clearInterval(rerankTimer);
 
-      // ── Pass 1: JSON decision ─────────────────────────────────────────────
-      status.textContent = '🧠 Beslissing nemen (pass 1)...';
-      history.scrollTop = history.scrollHeight;
+    return { p0, allExpandedTerms, chunks };
+  },
 
-      const p1msgs = [...State.chatHistory,
-        { role: 'user', content: this.buildContext(chunks) + '\nQuestion: ' + text }];
-      let p1raw  = await Backends.inferJSON(p1msgs, 400, 0.0);
-      let parsed = extractJSON(p1raw);
-
-      // Retry once on JSON parse failure (model output malformed)
+  /** Pass 1 JSON decision with one retry on parse failure. Returns parsed object or null. */
+  async decide(text, chunks, status) {
+    return this.phase(status, '🧠 Beslissing nemen (pass 1)...', async () => {
+      const msgs = [...State.chatHistory, {role:'user',content:this.buildContext(chunks)+'\nQuestion: '+text}];
+      let raw = await Backends.inferJSON(msgs, 400, 0.0);
+      let parsed = extractJSON(raw);
       if (!parsed) {
-        console.warn('[Pass 1] Parse failed, retrying once...');
-        p1raw  = await Backends.inferJSON(p1msgs, 400, 0.0);
-        parsed = extractJSON(p1raw);
-        if (!parsed) {
-          status.remove();
-          UI.addMessage('bot', '⚠️ Pass 1 returned no valid JSON after retry.\n\n' + p1raw);
-          return;
-        }
-        console.log('[Pass 1] Retry succeeded.');
+        console.warn('[Pass 1] Retry...');
+        raw = await Backends.inferJSON(msgs, 400, 0.0);
+        parsed = extractJSON(raw);
+        if (!parsed) return { parsed: null, raw };
       }
+      return { parsed, raw };
+    });
+  },
+
+  /** If Pass 1 found no evidence, scan full corpus and retry once with augmented context. */
+  async absenceCheck(text, parsed, chunks, allExpandedTerms) {
+    const noEvidence = !parsed.citations?.length ||
+      /niet gevonden|not found|geen informatie|insufficient|onbekend/i.test(parsed.decision||'');
+    if (!noEvidence || !allExpandedTerms.length) return { parsed, chunks };
+
+    const extras = Retrieval.checkAbsence(allExpandedTerms, chunks);
+    if (!extras.length) return { parsed, chunks };
+
+    const aug = [...chunks, ...extras.slice(0, Config.RETRIEVAL_TOP_K)];
+    const retryMsgs = [...State.chatHistory, {role:'user',content:
+      this.buildContext(aug)+'\nQuestion: '+text+'\n\n['+extras.length+' extra chunks via full-corpus scan]'}];
+    const rp = extractJSON(await Backends.inferJSON(retryMsgs, 400, 0.0));
+    if (rp?.citations?.length) {
+      State.lastChunks = aug;
+      return { parsed: rp, chunks: aug };
+    }
+    return { parsed, chunks };
+  },
+
+  async run(text) {
+    const history=document.getElementById('chat-history');
+    const lang=detectLanguage(text);
+    const langInstr='Respond in '+lang+'. Match the language of the user question exactly.';
+    const status=UI.showStatus('🔍 Vraag analyseren (pass 0)...');
+
+    try {
+      // ── Pass 0 + Retrieval ────────────────────────────────────────────────
+      const { p0, allExpandedTerms, chunks: retrievedChunks } = await this.retrieve(text, status);
+      let chunks = retrievedChunks;
+
+      // ── Pass 1: JSON decision ────────────────────────────────────────────
+      const { parsed: p1parsed, raw: p1raw } = await this.decide(text, chunks, status);
+      if (!p1parsed) {
+        status.remove();
+        UI.addMessage('bot','⚠️ Pass 1: no valid JSON after retry.\n\n'+p1raw);
+        return;
+      }
+      let parsed = p1parsed;
 
       // ── Absence check ─────────────────────────────────────────────────────
-      const noEvidence = !parsed.citations?.length ||
-        /niet gevonden|not found|geen informatie|insufficient|onbekend/i
-          .test(parsed.decision || '');
-
-      if (noEvidence && allExpandedTerms.length > 0) {
-        const extras = Retrieval.checkAbsence(allExpandedTerms, chunks);
-        if (extras.length > 0) {
-          console.log('[Absence check] Found', extras.length, 'additional chunks, retrying Pass 1.');
-          const augmented = [...chunks, ...extras.slice(0, Config.RETRIEVAL_TOP_K)];
-          const retryMsgs = [...State.chatHistory, { role: 'user', content:
-            this.buildContext(augmented) + '\nQuestion: ' + text + '\n\n' +
-            '[Note: ' + extras.length + ' additional chunks found via full-corpus keyword scan.]' }];
-          const retryRaw    = await Backends.inferJSON(retryMsgs, 400, 0.0);
-          const retryParsed = extractJSON(retryRaw);
-          if (retryParsed?.citations?.length) {
-            parsed = retryParsed; chunks = augmented; State.lastChunks = augmented;
-            console.log('[Absence check] Retry produced citations.');
-          }
-        } else {
-          console.log('[Absence check] Terms genuinely absent from corpus.');
-        }
-      }
+      ({ parsed, chunks } = await this.absenceCheck(text, parsed, chunks, allExpandedTerms));
 
       if (parsed.state_update) UI.updateState(parsed.state_update);
       if (parsed.citations?.length) {
-        UI.clearHighlights();
-        parsed.citations.forEach(c => { if (c.chunkId) UI.highlightChunk(c.chunkId); });
+        UI.clearHighlights(); parsed.citations.forEach(c=>{if(c.chunkId) UI.highlightChunk(c.chunkId);});
       }
 
-      // ── Pass 2: Streaming reply ───────────────────────────────────────────
+      // ── Pass 2: streaming reply ──────────────────────────────────────────
       status.remove();
-      const p2status = State.backend === 'lmstudio'
-        ? UI.showStatus('✍️ Antwoord opstellen (pass 2)...') : null;
-
-      const thinking = document.createElement('details');
-      thinking.className = 'msg bot thinking-block';
-      thinking.style.cssText = 'font-size:.82rem;color:#555;background:#f8f8f8;border-color:#ddd';
-      const thinkingSummary = document.createElement('summary');
-      thinkingSummary.style.cssText =
-        'cursor:pointer;font-size:.8rem;color:#888;user-select:none;padding:.3rem 0';
-      thinkingSummary.textContent = '🧠 Redenering (klik om te tonen/verbergen)';
-      thinking.append(thinkingSummary);
-      history.append(thinking);
-
-      const bubble = UI.createBubble(thinking);
-
-      const decisionCtx = parsed.decision
-        ? 'Decision: ' + parsed.decision
-        : 'Analysis: ' + JSON.stringify(parsed.state_update || {});
-      const shapeHint = p0.answer_shape && p0.answer_shape !== 'algemeen'
-        ? ' Expected answer shape: ' + p0.answer_shape + '.' : '';
-
-      const p2system =
-        'You are a practical assistant. Write a clear, actionable answer based on the decision and ' +
-        'context provided. ' + langInstr + shapeHint + ' Use markdown formatting. Be concise. ' +
-        'Do not repeat the decision verbatim.';
-      const p2msgs = [
-        { role: 'system', content: p2system },
-        { role: 'user', content: decisionCtx + '\n\nContext:\n' + this.buildContext(chunks) +
-          '\n\nQuestion: ' + text + '\n\nWrite a practical markdown answer:' },
-      ];
-
-      await Backends.inferStream(p2msgs, chunk => bubble.append(chunk));
+      const p2status=State.backend==='lmstudio'?UI.showStatus('✍️ Antwoord opstellen (pass 2)...'):null;
+      const thinking=document.createElement('details');
+      thinking.className='msg bot thinking-block';
+      thinking.style.cssText='font-size:.82rem;color:#555;background:#f8f8f8;border-color:#ddd';
+      const thinkingSummary=document.createElement('summary');
+      thinkingSummary.style.cssText='cursor:pointer;font-size:.8rem;color:#888;user-select:none;padding:.3rem 0';
+      thinkingSummary.textContent='🧠 Redenering (klik om te tonen/verbergen)';
+      thinking.append(thinkingSummary); history.append(thinking);
+      const bubble=UI.createBubble(thinking);
+      const shapeHint=p0.answer_shape&&p0.answer_shape!=='algemeen'?' Expected: '+p0.answer_shape+'.':'';
+      await Backends.inferStream([
+        {role:'system',content:'You are a practical assistant. '+langInstr+shapeHint+' Use markdown. Be concise.'},
+        {role:'user',content:(parsed.decision?'Decision: '+parsed.decision+'\n\n':'')+this.buildContext(chunks)+'\n\nQuestion: '+text+'\n\nWrite a practical markdown answer:'},
+      ],chunk=>bubble.append(chunk));
       if (p2status) p2status.remove();
-      const replyText = bubble.finalize(parsed.citations || []);
-
+      const replyText=bubble.finalize(parsed.citations||[]);
       if (State.thesaurus) Thesaurus.wikify(bubble.getBody());
 
-      // ── Pass 3: Compression + follow-up ───────────────────────────────────
-      const accFacts   = (State.jsonState.facts_gathered || []).join('; ') || 'none yet';
-      const intentHist = State.jsonState.intent_history || [];
-      const intentCtx  = intentHist.length
-        ? 'Prior: ' + intentHist.join(' → ') + ' → ' + State.jsonState.intent
-        : 'Current: ' + (State.jsonState.intent || 'unknown');
-
-      const p3system =
-        'You are a concise advisor. Compress the draft answer.\n' +
-        '[SHORT ANSWER]\n2-3 sentences max. ' + langInstr + ' No bullets. No headers.\n\n' +
-        '[FOLLOW-UP]\nExactly 2 short questions (one per line, starting with >) in ' + lang + '.';
-      const p3user =
-        'User question: ' + text + '\n\nContext:\n- ' + intentCtx + '\n- Facts: ' + accFacts +
-        '\n- Answer shape: ' + p0.answer_shape +
-        '\n\nDraft:\n' + replyText + '\n\nRewrite:';
-
-      let p3text = '';
+      // ── Pass 3: compression + follow-up ──────────────────────────────────
+      const accFacts=(State.jsonState.facts_gathered||[]).join('; ')||'none yet';
+      const intentCtx=State.jsonState.intent_history?.length
+        ? 'Prior: '+State.jsonState.intent_history.join(' → ')+' → '+State.jsonState.intent
+        : 'Current: '+(State.jsonState.intent||'unknown');
+      let p3text='';
       try {
-        p3text = await Backends.inferJSON(
-          [{ role: 'system', content: p3system }, { role: 'user', content: p3user }],
-          300, 0.3
-        );
-      } catch (e3) { console.warn('Pass 3 failed:', e3); }
+        p3text=await Backends.inferJSON([
+          {role:'system',content:'Compress the draft answer.\n[SHORT ANSWER]\n2-3 sentences. '+langInstr+' No bullets.\n\n[FOLLOW-UP]\nExactly 2 short questions (> prefix) in '+lang+'.'},
+          {role:'user',content:'Q: '+text+'\n\n- '+intentCtx+'\n- Facts: '+accFacts+'\n- Shape: '+p0.answer_shape+'\n\nDraft:\n'+replyText+'\n\nRewrite:'},
+        ],300,0.3);
+      } catch(e3) { console.warn('Pass 3 failed:',e3); }
 
       if (p3text.trim()) {
-        const p3el = document.createElement('div');
-        p3el.className = 'msg bot pass3-block';
-        const p3body = document.createElement('div');
-        p3body.className = 'md-body';
-        const p3md = p3text
-          .replace(/\[SHORT ANSWER\]/gi, '')
-          .replace(/\[FOLLOW-UP\]/gi, '\n\n---\n\n**Mogelijke vervolgvragen:**\n\n').trim();
-        p3body.innerHTML = typeof marked !== 'undefined' ? marked.parse(p3md) : p3md;
+        const p3el=document.createElement('div'); p3el.className='msg bot pass3-block';
+        const p3body=document.createElement('div'); p3body.className='md-body';
+        p3body.innerHTML=typeof marked!=='undefined'?marked.parse(
+          p3text.replace(/\[SHORT ANSWER\]/gi,'').replace(/\[FOLLOW-UP\]/gi,'\n\n---\n\n**Mogelijke vervolgvragen:**\n\n').trim()
+        ):p3text;
         p3el.append(p3body);
-        p3el.querySelectorAll('blockquote p, blockquote').forEach(el => {
-          const q = el.textContent.trim().replace(/^>\s*/, '');
-          if (q.length > 5) {
-            el.style.cursor = 'pointer'; el.title = 'Klik om te stellen';
-            el.addEventListener('click', () => {
-              document.getElementById('chat-input').value = q;
+        p3el.querySelectorAll('blockquote p, blockquote').forEach(el=>{
+          const q=el.textContent.trim().replace(/^>\s*/,'');
+          if (q.length>5) {
+            el.style.cursor='pointer'; el.title='Klik om te stellen';
+            el.addEventListener('click',()=>{
+              document.getElementById('chat-input').value=q;
               document.getElementById('input-form').requestSubmit();
             });
           }
         });
-        history.append(p3el); history.scrollTop = history.scrollHeight;
+        history.append(p3el); history.scrollTop=history.scrollHeight;
       }
 
-      // ── Update compact history ─────────────────────────────────────────────
-      const compact = JSON.stringify({
-        decision: parsed.decision || '',
-        state_update: {
-          intent: parsed.state_update?.intent || '',
-          user_facts: parsed.state_update?.user_facts || [],
-          facts_gathered: (parsed.state_update?.facts_gathered || []).slice(0, 3),
-        },
-        citations: (parsed.citations || []).slice(0, 2),
+      // ── Update compact history ───────────────────────────────────────────
+      const compact=JSON.stringify({
+        decision:parsed.decision||'',
+        state_update:{intent:parsed.state_update?.intent||'',user_facts:parsed.state_update?.user_facts||[],
+          facts_gathered:(parsed.state_update?.facts_gathered||[]).slice(0,3)},
+        citations:(parsed.citations||[]).slice(0,2),
       });
-      State.chatHistory.push({ role: 'user', content: text });
-      State.chatHistory.push({ role: 'assistant', content: compact });
-      const [sys, ...qa] = State.chatHistory;
-      if (qa.length > Config.HISTORY_MAX_TURNS * 2)
-        State.chatHistory = [sys, ...qa.slice(-(Config.HISTORY_MAX_TURNS * 2))];
+      State.chatHistory.push({role:'user',content:text});
+      State.chatHistory.push({role:'assistant',content:compact});
+      const [sys,...qa]=State.chatHistory;
+      if (qa.length>Config.HISTORY_MAX_TURNS*2) State.chatHistory=[sys,...qa.slice(-(Config.HISTORY_MAX_TURNS*2))];
 
-    } catch (e) {
-      if (rerankTimer) clearInterval(rerankTimer);
+    } catch(e) {
       try { status.remove(); } catch {}
       throw e;
     }
   },
 };
 
+// ── MODULE: Doc ───────────────────────────────────────────────────────────────
+/**
+ * Template document builder.
+ *
+ * Source-of-truth separation:
+ *   - `doc-source` textarea  = exactly what the user typed. NEVER mutated by
+ *     block execution. Safe to edit while blocks run.
+ *   - `State.docResults`     = Map<blockKey, outputText>, one entry per
+ *     prompt/evaluation block that has been run. blockKey is a content hash
+ *     of the block's fence text, so results survive edits elsewhere in the
+ *     document and re-running a block overwrites its own entry only.
+ *   - `State.docProvenance`  = array of log entries, rendered as a table at
+ *     the bottom of the preview. Not part of source; included on download.
+ *
+ * render() merges source + docResults + docProvenance into the preview HTML.
+ * Re-running a block updates docResults[key] and re-renders — no index
+ * arithmetic, no source mutation, no corruption if the user types meanwhile.
+ */
+const Doc = {
+  STORAGE_KEY:      'fietsbel-template',
+  RESULTS_KEY:      'fietsbel-template-results',
+  PROVENANCE_KEY:   'fietsbel-template-provenance',
+
+  /** Short, stable hash of a string (FNV-1a, 32-bit hex). Used as block key. */
+  hashBlock(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+  },
+
+  /** Parse source into typed blocks: text | prompt | evaluation | (other fence) */
+  parseBlocks(source) {
+    const blocks=[], re=/^```(\w+)\n([\s\S]*?)^```[ \t]*$/gm;
+    let last=0, match;
+    while ((match=re.exec(source))!==null) {
+      if (match.index>last)
+        blocks.push({type:'text',content:source.slice(last,match.index),start:last,end:match.index});
+      const type=match[1].toLowerCase();
+      blocks.push({type,content:match[2],raw:match[0],start:match.index,end:match.index+match[0].length,
+        key:(type==='prompt'||type==='evaluation')?this.hashBlock(match[0]):null});
+      last=match.index+match[0].length;
+    }
+    if (last<source.length)
+      blocks.push({type:'text',content:source.slice(last),start:last,end:source.length});
+    return blocks;
+  },
+
+  /** Parse prompt block content → {retrieval, rewrite} (multi-line safe) */
+  parsePromptBlock(content) {
+    const lines=content.trim().split('\n');
+    let retrieval=[], rewrite=[], current=null;
+    for (const line of lines) {
+      if (line.startsWith('retrieval:')) { current='r'; retrieval.push(line.slice('retrieval:'.length).trim()); }
+      else if (line.startsWith('rewrite:')) { current='w'; rewrite.push(line.slice('rewrite:'.length).trim()); }
+      else if (current==='r'&&line.trim()) retrieval.push(line.trim());
+      else if (current==='w'&&line.trim()) rewrite.push(line.trim());
+    }
+    return {retrieval:retrieval.join(' '),rewrite:rewrite.join(' ')};
+  },
+
+  /** Parse evaluation block content → array of rubric rows */
+  parseEvalRows(content) {
+    return content.trim().split('\n')
+      .filter(l=>l.trim().startsWith('|'))
+      .map(l=>{
+        const cols=l.split('|').map(c=>c.trim()).filter(Boolean);
+        if (cols.length<3) return null;
+        return {
+          title:cols[0]||'', description:cols[1]||'',
+          onestar:cols[2]||'', twostar:cols[3]||'', threestar:cols[4]||'',
+          doRag:cols.some(c=>c.toLowerCase()==='do-rag'),
+        };
+      }).filter(Boolean);
+  },
+
+  /**
+   * Find evaluable text above an eval block (by block index in `blocks`).
+   * Scans backward over sibling blocks, stopping at a heading line or a
+   * non-output/non-text fence (prompt/evaluation). Any existing result for
+   * a prompt block immediately above IS included (it renders as plain
+   * prose in the preview, equivalent to an unwrapped output fence).
+   */
+  getEvalScope(blocks, blockIdx) {
+    let scope = '';
+    for (let i = blockIdx - 1; i >= 0; i--) {
+      const b = blocks[i];
+      if (b.type === 'text') {
+        // Stop at the last heading line within this text block; keep text after it
+        const lines = b.content.split('\n');
+        let headingAt = -1;
+        for (let li = lines.length - 1; li >= 0; li--) {
+          if (/^#{1,6}\s/.test(lines[li])) { headingAt = li; break; }
+        }
+        if (headingAt >= 0) {
+          scope = lines.slice(headingAt + 1).join('\n') + scope;
+          break; // heading found — stop scanning further back
+        }
+        scope = b.content + scope;
+      } else if (b.type === 'prompt') {
+        const result = State.docResults[b.key];
+        if (result) scope = result + '\n\n' + scope;
+        break; // prompt block (with or without result) is a hard boundary
+      } else if (b.type === 'evaluation') {
+        break; // another evaluation block is a hard boundary
+      }
+      // other fence types: skip silently, keep scanning backward
+    }
+    return scope.trim();
+  },
+
+  /** Run a prompt block: passes 0-2 (research) + rewrite pass (document prose) */
+  async runPromptBlock(block, onChunk) {
+    const {retrieval,rewrite}=this.parsePromptBlock(block.content);
+    if (!retrieval) throw new Error('Geen retrieval: prompt opgegeven.');
+    const sysPrompt=Setup.buildSystemPrompt([...new Set(State.chunks.map(c=>c.docName))]);
+
+    const p0=await Pipeline.queryExpand(retrieval,detectLanguage(retrieval));
+    const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
+    const chunks=await Retrieval.search(retrieval,expanded,null);
+    const context=Pipeline.buildContext(chunks);
+
+    const p1msgs=[{role:'system',content:sysPrompt},{role:'user',content:context+'\nQuestion: '+retrieval}];
+    let p1raw=await Backends.inferJSON(p1msgs,400,0.0);
+    let parsed=extractJSON(p1raw)||{};
+    if (!parsed.decision) { p1raw=await Backends.inferJSON(p1msgs,400,0.0); parsed=extractJSON(p1raw)||{}; }
+
+    let p2text='';
+    await Backends.inferStream([
+      {role:'system',content:'You are a thorough research assistant. Compile all relevant information from the context. Be comprehensive and factual.'},
+      {role:'user',content:(parsed.decision?'Decision: '+parsed.decision+'\n\n':'')+context+'\n\nResearch question: '+retrieval+'\n\nCompile findings:'},
+    ],chunk=>{p2text+=chunk;});
+
+    const rewriteInstr=rewrite||'Write a clear, professional document section based on the research findings.';
+    let outputText='';
+    await Backends.inferStream([
+      {role:'system',content:'You are a professional document writer. Transform research findings into polished document prose. Output only the document text, no meta-commentary.'},
+      {role:'user',content:'Writing instruction: '+rewriteInstr+'\n\nResearch findings:\n'+p2text+'\n\nWrite the document section:'},
+    ],chunk=>{outputText+=chunk; if(onChunk) onChunk(outputText);});
+
+    const chunkIds=(parsed.citations||[]).map(c=>c.chunkId).filter(Boolean);
+    return {
+      outputText,
+      provenance:{type:'prompt',model:State.chatModel||'Browser AI',embedModel:State.embedModel,
+        chunkIds,inputWords:wordCount(retrieval+' '+context),outputWords:wordCount(outputText)},
+    };
+  },
+
+  /** Run an evaluation block: one LLM call per rubric row */
+  async runEvalBlock(blocks, blockIdx, onChunk) {
+    const block = blocks[blockIdx];
+    const rows=this.parseEvalRows(block.content);
+    if (!rows.length) throw new Error('Geen geldige rubrieken gevonden.');
+    const scopeText=this.getEvalScope(blocks, blockIdx);
+    if (!scopeText) throw new Error('Geen tekst boven dit evaluatieblok gevonden.');
+
+    let outputLines=[], totalStars=0, maxStars=rows.length*3;
+
+    for (const row of rows) {
+      if (State.docStopRequested) break;
+      let context='';
+      if (row.doRag&&State.chunks.length>0) {
+        const p0=await Pipeline.queryExpand(row.title+' '+row.description,'Dutch');
+        const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
+        const chunks=await Retrieval.search(row.description,expanded,null);
+        context=Pipeline.buildContext(chunks)+'\n\n';
+      }
+
+      const rowPrompt=
+        'Evaluate the following text on the rubric criterion below.\n\n'+
+        (context?'REFERENCE CONTEXT:\n'+context:'')+'TEXT TO EVALUATE:\n'+scopeText+'\n\n'+
+        'RUBRIC:\nAspect: '+row.title+'\nDescription: '+row.description+'\n'+
+        '★ (barely passing): '+row.onestar+'\n★★ (good): '+row.twostar+'\n★★★ (excellent): '+row.threestar+'\n\n'+
+        'Output format exactly: **'+row.title+' ★N** — [one-sentence motivation]\n'+
+        'Replace N with 1, 2, or 3. Be honest and critical.';
+
+      const result=await Backends.inferJSON([
+        {role:'system',content:'You are a strict document quality evaluator. Output ONLY the requested format.'},
+        {role:'user',content:rowPrompt},
+      ],120,0.1);
+
+      const numMatch=result.match(/★(\d)/); const starStr=(result.match(/★+/g)||[])[0]||'★';
+      let stars=numMatch ? parseInt(numMatch[1]) : starStr.length;
+      stars=Math.max(1,Math.min(3,stars));
+      totalStars+=stars;
+
+      const starDisplay='★'.repeat(stars)+'☆'.repeat(3-stars);
+      const formatted=result.trim().replace(/★[\d★☆]*/,'★'+stars).replace(/★\d/,starDisplay)
+        .replace(/^(\*\*[^*]+)\s*★+/,'$1 '+starDisplay);
+      outputLines.push(formatted);
+
+      const runningTotal='**Totaal tot nu: '+totalStars+'/'+(outputLines.length*3)+' ★**';
+      if (onChunk) onChunk(outputLines.join('\n')+'\n\n'+runningTotal);
+    }
+
+    const totalLine='\n\n**Totaal: '+totalStars+'/'+maxStars+' ★ ('+(Math.round(totalStars/maxStars*100))+'%)**';
+    const outputText=outputLines.join('\n')+totalLine;
+
+    return {
+      outputText,
+      provenance:{type:'eval',model:State.chatModel||'Browser AI',embedModel:'',
+        chunkIds:[],inputWords:wordCount(scopeText),outputWords:wordCount(outputText),
+        stars:totalStars+'/'+maxStars},
+    };
+  },
+
+  /** Execute a single block by its current index; writes result into docResults, re-renders */
+  async runBlockByIndex(blockIdx) {
+    const source=document.getElementById('doc-source').value;
+    const blocks=this.parseBlocks(source);
+    if (blockIdx>=blocks.length) return;
+    const block=blocks[blockIdx];
+    if (block.type!=='prompt'&&block.type!=='evaluation') return;
+
+    const blockEl=document.querySelector('[data-block="'+blockIdx+'"]');
+    const prev=blockEl?.nextElementSibling;
+    if (prev?.classList.contains('doc-output-streaming')) prev.remove();
+
+    const streamEl=document.createElement('div');
+    streamEl.className='doc-output-streaming';
+    streamEl.innerHTML='<em>⏳ Bezig met uitvoeren...</em>';
+    if (blockEl) blockEl.after(streamEl);
+
+    const runBtn=blockEl?.querySelector('[data-run]');
+    if (runBtn) runBtn.disabled=true;
+    document.getElementById('doc-status').textContent='⏳ Blok '+(blockIdx+1)+' uitvoeren...';
+
+    const renderInto=text=>{
+      streamEl.innerHTML='<div class="md-body">'+(typeof marked!=='undefined'?marked.parse(text):text)+'</div>';
+    };
+
+    try {
+      let result;
+      if (block.type==='prompt') {
+        result=await this.runPromptBlock(block,renderInto);
+      } else {
+        result=await this.runEvalBlock(blocks,blockIdx,renderInto);
+      }
+
+      State.docResults[block.key]=result.outputText;
+      State.docProvenance.push(result.provenance);
+      this.saveResults();
+
+      const preview=document.getElementById('doc-preview');
+      const scrollTop=preview.scrollTop;
+      this.render(document.getElementById('doc-source').value); // re-read in case user edited meanwhile
+      preview.scrollTop=scrollTop;
+
+      document.getElementById('doc-status').textContent='✓ Blok '+(blockIdx+1)+' klaar';
+
+    } catch(e) {
+      streamEl.className='';
+      streamEl.style.cssText='color:red;padding:.5rem;border:1px solid #fcc;background:#fff5f5;margin:.5rem 0;border-radius:4px';
+      streamEl.textContent='❌ Fout: '+e.message;
+      document.getElementById('doc-status').textContent='❌ Fout in blok '+(blockIdx+1);
+      console.error('[Doc] Block error:',e);
+    }
+  },
+
+  /**
+   * Run all prompt/evaluation blocks top-to-bottom.
+   * Blocks are stable across iterations now (source is never mutated by
+   * execution), so we re-parse once and iterate by index directly.
+   */
+  async runAll() {
+    State.docRunning=true; State.docStopRequested=false;
+    document.getElementById('doc-play-all').disabled=true;
+    document.getElementById('doc-stop').disabled=false;
+
+    const source=document.getElementById('doc-source').value;
+    const blocks=this.parseBlocks(source);
+    for (let i=0;i<blocks.length;i++) {
+      if (State.docStopRequested) break;
+      if (blocks[i].type==='prompt'||blocks[i].type==='evaluation')
+        await this.runBlockByIndex(i);
+    }
+
+    State.docRunning=false;
+    document.getElementById('doc-play-all').disabled=false;
+    document.getElementById('doc-stop').disabled=true;
+    document.getElementById('doc-status').textContent=State.docStopRequested?'⏹ Gestopt':'✓ Alles uitgevoerd';
+  },
+
+  /** Render source + docResults + provenance log to the preview pane */
+  render(source) {
+    const blocks=this.parseBlocks(source);
+    let html='';
+    blocks.forEach((block,i) => {
+      if (block.type==='text') {
+        html+=typeof marked!=='undefined'?marked.parse(block.content):block.content;
+      } else if (block.type==='prompt') {
+        const {retrieval,rewrite}=this.parsePromptBlock(block.content);
+        html+=`<div class="doc-block" data-block="${i}">
+          <div class="doc-block-header">
+            <span class="doc-block-type">✍️ Prompt</span>
+            <button class="doc-run-btn" data-run="${i}">▶ Uitvoeren</button>
+          </div>
+          <div class="doc-block-body">
+            <div class="doc-block-field"><strong>Ophalen:</strong> ${escapeHtml(retrieval||'(leeg)')}</div>
+            ${rewrite?`<div class="doc-block-field"><strong>Herschrijven:</strong> ${escapeHtml(rewrite)}</div>`:''}
+          </div>
+        </div>`;
+        const result=State.docResults[block.key];
+        if (result) html+=`<div class="doc-output">${typeof marked!=='undefined'?marked.parse(result):result}</div>`;
+      } else if (block.type==='evaluation') {
+        const rows=this.parseEvalRows(block.content);
+        html+=`<div class="doc-block" data-block="${i}">
+          <div class="doc-block-header">
+            <span class="doc-block-type">📊 Evaluatie — ${rows.length} criteria</span>
+            <button class="doc-run-btn" data-run="${i}">▶ Evalueren</button>
+          </div>
+          <div class="doc-block-body">
+            ${rows.map(r=>`<div class="doc-eval-row"><strong>${escapeHtml(r.title)}</strong>${r.doRag?' <em>🔍 RAG</em>':''} — ${escapeHtml(r.description)}</div>`).join('')}
+          </div>
+        </div>`;
+        const result=State.docResults[block.key];
+        if (result) html+=`<div class="doc-output">${typeof marked!=='undefined'?marked.parse(result):result}</div>`;
+      } else {
+        // Unknown fence type (incl. legacy ```output) — render as-is via marked
+        html+=typeof marked!=='undefined'?marked.parse(block.raw):escapeHtml(block.raw);
+      }
+    });
+
+    if (State.docProvenance.length) html += this.renderProvenance();
+
+    const preview=document.getElementById('doc-preview');
+    preview.innerHTML=html;
+    UI.renderMermaid();
+  },
+
+  /** Build the provenance log table as HTML (derived, not stored in source) */
+  renderProvenance() {
+    const rows = State.docProvenance.map((e,i) => {
+      const ts = e.ts || '—';
+      return `| ${i+1} | ${e.type} | ${e.model} | ${(e.chunkIds||[]).join(', ')||'—'} | `+
+             `${e.inputWords} | ${e.outputWords} | ${e.stars||'—'} | ${ts} |`;
+    }).join('\n');
+    const md = '\n\n---\n## 🤖 AI Provenance Log\n\n'+
+      '| # | Type | Model | Chunks | Input w | Output w | Score | Tijd |\n'+
+      '|---|------|-------|--------|---------|----------|-------|------|\n'+rows;
+    return typeof marked!=='undefined'?marked.parse(md):md;
+  },
+
+  /**
+   * Serialize source + results + provenance for download.
+   * Inserts an ```output fence after each prompt/evaluation block that has
+   * a result, and appends the provenance table as markdown — so the
+   * downloaded file is self-contained and re-uploadable.
+   */
+  serialize(source) {
+    const blocks=this.parseBlocks(source);
+    let out='';
+    blocks.forEach(block=>{
+      out+= block.type==='text' ? block.content : block.raw;
+      if ((block.type==='prompt'||block.type==='evaluation')) {
+        const result=State.docResults[block.key];
+        if (result) out+='\n\n```output\n'+result.trim()+'\n```\n';
+      }
+    });
+    if (State.docProvenance.length) {
+      const rows = State.docProvenance.map((e,i) =>
+        `| ${i+1} | ${e.type} | ${e.model} | ${(e.chunkIds||[]).join(', ')||'—'} | `+
+        `${e.inputWords} | ${e.outputWords} | ${e.stars||'—'} | ${e.ts||'—'} |`
+      ).join('\n');
+      out += '\n\n---\n## 🤖 AI Provenance Log\n\n'+
+        '| # | Type | Model | Chunks | Input w | Output w | Score | Tijd |\n'+
+        '|---|------|-------|--------|---------|----------|-------|------|\n'+rows+'\n';
+    }
+    return out;
+  },
+
+  save(source)  { try { localStorage.setItem(this.STORAGE_KEY,source); } catch {} },
+  load()        { return localStorage.getItem(this.STORAGE_KEY)||''; },
+  saveResults() {
+    try {
+      localStorage.setItem(this.RESULTS_KEY, JSON.stringify(State.docResults));
+      localStorage.setItem(this.PROVENANCE_KEY, JSON.stringify(State.docProvenance));
+    } catch {}
+  },
+  loadResults() {
+    try {
+      State.docResults = JSON.parse(localStorage.getItem(this.RESULTS_KEY) || '{}');
+      State.docProvenance = JSON.parse(localStorage.getItem(this.PROVENANCE_KEY) || '[]');
+    } catch { State.docResults = {}; State.docProvenance = []; }
+  },
+  /** Clear results + provenance — called when a new template.md is uploaded */
+  resetResults() {
+    State.docResults = {}; State.docProvenance = [];
+    try { localStorage.removeItem(this.RESULTS_KEY); localStorage.removeItem(this.PROVENANCE_KEY); } catch {}
+  },
+};
 
 // ── MODULE: Setup ──────────────────────────────────────────────────────────────
 const Setup = {
   showPanel(id) {
-    document.querySelectorAll('#setup-dialog .panel').forEach(p => { p.hidden = true; });
-    document.getElementById(id).hidden = false;
+    document.querySelectorAll('#setup-dialog .panel').forEach(p=>{p.hidden=true;});
+    document.getElementById(id).hidden=false;
   },
-
-  progress(text, pct) {
-    document.getElementById('load-text').textContent = text;
-    document.getElementById('load-bar').value = Math.round(pct);
+  progress(text,pct) {
+    document.getElementById('load-text').textContent=text;
+    document.getElementById('load-bar').value=Math.round(pct);
   },
-
   async loadApiModels(url) {
-    const res = await fetch(url + '/v1/models');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return (await res.json()).data.map(m => m.id);
+    const res=await fetch(url+'/v1/models'); if (!res.ok) throw new Error('HTTP '+res.status);
+    return (await res.json()).data.map(m=>m.id);
   },
-
-  populateSelect(selectId, models, preferTerms = []) {
-    const sel = document.getElementById(selectId);
-    sel.innerHTML = '';
-    models.forEach(m => sel.add(new Option(m, m)));
-    const idx = models.findIndex(m => preferTerms.some(t => m.toLowerCase().includes(t)));
-    if (idx >= 0) sel.selectedIndex = idx;
+  populateSelect(id, models, preferTerms=[]) {
+    const sel=document.getElementById(id); sel.innerHTML='';
+    models.forEach(m=>sel.add(new Option(m,m)));
+    const idx=models.findIndex(m=>preferTerms.some(t=>m.toLowerCase().includes(t)));
+    if (idx>=0) sel.selectedIndex=idx;
   },
-
   async loadTransformers() {
-    let mod;
-    try { mod = await import('./transformers.min.js'); }
+    let mod; try { mod=await import('./transformers.min.js'); }
     catch { throw new Error('transformers.min.js niet gevonden naast index.html.'); }
-
-    const { pipeline, env, TextStreamer, AutoTokenizer, AutoModel,
-            AutoModelForSequenceClassification, mean_pooling, layer_norm } = mod;
-    State.TextStreamer = TextStreamer;
-    State.tjsMath = { mean_pooling, layer_norm };
-    env.allowLocalModels = false; env.allowRemoteModels = true; env.useBrowserCache = true;
-    const device = typeof navigator.gpu !== 'undefined' ? 'webgpu' : 'wasm';
-
-    const prog = (msg, pct) => {
-      document.getElementById('tjs-prog-text').textContent = msg;
-      document.getElementById('tjs-prog-bar').value = Math.round(pct);
+    const {pipeline,env,TextStreamer,AutoTokenizer,AutoModel,
+           AutoModelForSequenceClassification,mean_pooling,layer_norm}=mod;
+    State.TextStreamer=TextStreamer; State.tjsMath={mean_pooling,layer_norm};
+    env.allowLocalModels=false; env.allowRemoteModels=true; env.useBrowserCache=true;
+    const device=typeof navigator.gpu!=='undefined'?'webgpu':'wasm';
+    const prog=(msg,pct)=>{
+      document.getElementById('tjs-prog-text').textContent=msg;
+      document.getElementById('tjs-prog-bar').value=Math.round(pct);
     };
-    prog('Embedding tokenizer laden (nomic-embed-text-v1.5)...', 5);
-    State.tjsTokenizer = await AutoTokenizer.from_pretrained('nomic-ai/nomic-embed-text-v1.5');
-    State.tjsEmbedModel = await AutoModel.from_pretrained('nomic-ai/nomic-embed-text-v1.5', {
-      device, dtype: 'q4',
-      progress_callback: x => { if (x.status==='progress')
-        prog('Embedding: ' + (x.file||'') + ' ' + Math.round(x.progress||0) + '%', 5+(x.progress||0)*.15); },
-    });
-    prog('Reranker laden (bge-reranker-base)...', 25);
-    State.tjsRerankTokenizer = await AutoTokenizer.from_pretrained('Xenova/bge-reranker-base', {
-      progress_callback: x => { if (x.status==='progress') prog('Reranker tokenizer: ' + (x.file||''), 26); },
-    });
-    State.tjsRerankModel = await AutoModelForSequenceClassification.from_pretrained(
-      'Xenova/bge-reranker-base', {
-        device, dtype: 'q8',
-        progress_callback: x => { if (x.status==='progress')
-          prog('Reranker: ' + Math.round(x.progress||0) + '%', 27+(x.progress||0)*.18); },
-      }
-    );
-    prog('LLM laden (granite-4.0-micro-ONNX-web)...', 50);
-    State.tjsLLMPipeline = await pipeline('text-generation',
-      'onnx-community/granite-4.0-micro-ONNX-web', {
-        device,
-        progress_callback: x => { if (x.status==='progress')
-          prog('LLM: ' + Math.round(x.progress||0) + '%', 50+(x.progress||0)*.5); },
-      }
-    );
-    prog('✓ Modellen geladen!', 100);
+    prog('Embedding tokenizer laden...',5);
+    State.tjsTokenizer=await AutoTokenizer.from_pretrained('nomic-ai/nomic-embed-text-v1.5');
+    State.tjsEmbedModel=await AutoModel.from_pretrained('nomic-ai/nomic-embed-text-v1.5',{device,dtype:'q4',
+      progress_callback:x=>{if(x.status==='progress') prog('Embedding: '+(x.file||'')+' '+Math.round(x.progress||0)+'%',5+(x.progress||0)*.15);}});
+    prog('Reranker laden...',25);
+    State.tjsRerankTokenizer=await AutoTokenizer.from_pretrained('Xenova/bge-reranker-base',{
+      progress_callback:x=>{if(x.status==='progress') prog('Reranker tokenizer: '+(x.file||''),26);}});
+    State.tjsRerankModel=await AutoModelForSequenceClassification.from_pretrained('Xenova/bge-reranker-base',{device,dtype:'q8',
+      progress_callback:x=>{if(x.status==='progress') prog('Reranker: '+Math.round(x.progress||0)+'%',27+(x.progress||0)*.18);}});
+    prog('LLM laden...',50);
+    State.tjsLLMPipeline=await pipeline('text-generation','onnx-community/granite-4.0-micro-ONNX-web',{device,
+      progress_callback:x=>{if(x.status==='progress') prog('LLM: '+Math.round(x.progress||0)+'%',50+(x.progress||0)*.5);}});
+    prog('✓ Modellen geladen!',100);
   },
-
   buildSystemPrompt(fileNames) {
-    const ex = fileNames[0] || 'document.md';
-    return 'You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.\n\n' +
-      'Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]\n\n' +
-      'Output valid JSON only. No markdown, no prose, no explanations. Start with { and end with }.\n' +
-      '{"decision":"<one short phrase>","state_update":{"intent":"<what user wants THIS turn>",' +
-      '"user_facts":["<role or fact stated by user>"],"facts_gathered":["<fact from context>"]},' +
-      '"citations":[{"document":"' + ex + '","chunkId":"' + ex + '_3"}]}\n\n' +
-      'Rules: no reply field. user_facts = from the question. facts_gathered = from context only. ' +
-      'Copy chunkId exactly.';
+    const ex=fileNames[0]||'document.md';
+    return 'You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.\n\n'+
+      'Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]\n\n'+
+      'Output valid JSON only. No markdown. Start with { end with }.\n'+
+      '{"decision":"<phrase>","state_update":{"intent":"<intent>","user_facts":[],"facts_gathered":[]},"citations":[{"document":"'+ex+'","chunkId":"'+ex+'_3"}]}\n\n'+
+      'Rules: no reply field. user_facts from question. facts_gathered from context. Copy chunkId exactly.';
   },
-
-  /**
-   * Two-phase ingestion:
-   *   Phase 1: chunk all docs, add prevId/nextId links, render panes, save file texts to cache
-   *   Phase 2: batch embed all chunks (API: one request per batch; TJS: sequential)
-   *   Phase 3: save vectors + session config to IndexedDB
-   */
   async ingestFiles(files) {
-    const isThesaurus = f => /thesaurus/i.test(f.name);
-    const thesFile    = Array.from(files).find(isThesaurus);
-    const docFiles    = Array.from(files).filter(f => !isThesaurus(f));
-
+    const isThes=f=>/thesaurus/i.test(f.name);
+    const thesFile=Array.from(files).find(isThes);
+    const docFiles=Array.from(files).filter(f=>!isThes(f));
     if (thesFile) {
-      this.progress('📚 Thesaurus laden: ' + thesFile.name + '...', 0);
-      const thesText = await thesFile.text();
-      State.thesaurus = Thesaurus.parse(thesText);
-      const n = Array.from(State.thesaurus.entries())
-        .filter(([k, v]) => k === v.term.toLowerCase()).length;
-      console.log('[Thesaurus] ' + n + ' terms from ' + thesFile.name);
+      this.progress('📚 Thesaurus laden: '+thesFile.name+'...',0);
+      State.thesaurus=Thesaurus.parse(await thesFile.text());
+      const n=Array.from(State.thesaurus.entries()).filter(([k,v])=>k===v.term.toLowerCase()).length;
+      console.log('[Thesaurus] '+n+' terms');
     }
+    if (!docFiles.length) { this.progress('✓ Alleen thesaurus geladen',100); return; }
 
-    if (!docFiles.length) { this.progress('✓ Alleen thesaurus geladen', 100); return; }
-
-    // ── Phase 1: chunk + render ──────────────────────────────────────────────
-    const allChunks = [];
+    // Phase 1: chunk + render
+    const allChunks=[];
     for (const file of docFiles) {
-      const text = await file.text();
-      try { await Cache.saveFile(file.name, text); } catch {}   // cache file text for restore
-      UI.renderDocument(file.name, text);
-      const raw = Chunker.chunk(text, file.name);
-      // Link immediate neighbours for context expansion in buildContext
-      raw.forEach((c, i) => {
-        c.docName = file.name;
-        c.prevId  = i > 0              ? raw[i - 1].id : null;
-        c.nextId  = i < raw.length - 1 ? raw[i + 1].id : null;
-      });
+      const text=await file.text();
+      try { await Cache.saveFile(file.name,text); } catch {}
+      UI.renderDocument(file.name,text);
+      const raw=Chunker.chunk(text,file.name);
+      raw.forEach((c,i)=>{ c.docName=file.name; c.prevId=i>0?raw[i-1].id:null; c.nextId=i<raw.length-1?raw[i+1].id:null; });
       allChunks.push(...raw);
     }
-    State.chatHistory = [{ role: 'system', content: this.buildSystemPrompt(docFiles.map(f => f.name)) }];
+    State.chatHistory=[{role:'system',content:this.buildSystemPrompt(docFiles.map(f=>f.name))}];
 
-    // ── Phase 2: embed ───────────────────────────────────────────────────────
-    if (State.backend === 'transformers') {
-      for (let i = 0; i < allChunks.length; i++) {
-        this.progress(
-          'Vectoriseren… chunk ' + (i+1) + '/' + allChunks.length + ' (' + allChunks[i].docName + ')',
-          (i / allChunks.length) * 92
-        );
-        try {
-          allChunks[i].vector = await Backends.embed(allChunks[i].text, 'document');
-        } catch (e) {
-          alert('Embedding mislukt op chunk ' + (i+1) + ': ' + e.message);
-          throw e;
-        }
+    // Phase 2: embed (batch for API, sequential for TJS)
+    if (State.backend==='transformers') {
+      for (let i=0;i<allChunks.length;i++) {
+        this.progress('Vectoriseren… chunk '+(i+1)+'/'+allChunks.length,i/allChunks.length*92);
+        try { allChunks[i].vector=await Backends.embed(allChunks[i].text,'document'); }
+        catch(e) { alert('Embedding mislukt: '+e.message); throw e; }
       }
     } else {
-      const B = Config.EMBED_BATCH_SIZE;
-      for (let b = 0; b < allChunks.length; b += B) {
-        const batch = allChunks.slice(b, b + B);
-        this.progress(
-          'Vectoriseren… batch ' + (Math.floor(b/B)+1) + '/' + Math.ceil(allChunks.length/B),
-          (b / allChunks.length) * 92
-        );
+      const B=Config.EMBED_BATCH_SIZE;
+      for (let b=0;b<allChunks.length;b+=B) {
+        const batch=allChunks.slice(b,b+B);
+        this.progress('Vectoriseren… batch '+(Math.floor(b/B)+1)+'/'+Math.ceil(allChunks.length/B),b/allChunks.length*92);
         try {
-          const vectors = await Backends.embedBatch(batch.map(c => c.text), 'document');
-          batch.forEach((c, i) => { c.vector = vectors[i]; });
-        } catch (e) {
-          alert('Batch embedding mislukt: ' + e.message);
-          throw e;
-        }
+          const vectors=await Backends.embedBatch(batch.map(c=>c.text),'document');
+          batch.forEach((c,i)=>{c.vector=vectors[i];});
+        } catch(e) { alert('Batch embedding mislukt: '+e.message); throw e; }
       }
     }
-    State.chunks = allChunks;
+    State.chunks=allChunks;
 
-    // ── Phase 3: persist to IndexedDB ────────────────────────────────────────
-    this.progress('Sessie opslaan in browser...', 95);
+    // Phase 3: cache
+    this.progress('Sessie opslaan...',95);
     try {
       await Cache.saveSession({
-        backend: State.backend, url: State.url,
-        chatModel: State.chatModel, embedModel: State.embedModel, rerankModel: State.rerankModel,
-        fileNames: docFiles.map(f => f.name),
-        thesaurus: State.thesaurus ? Array.from(State.thesaurus.entries()) : null,
+        backend:State.backend,chatUrl:State.chatUrl,embedUrl:State.embedUrl,rerankUrl:State.rerankUrl,
+        chatModel:State.chatModel,embedModel:State.embedModel,rerankModel:State.rerankModel,
+        fileNames:docFiles.map(f=>f.name),
+        thesaurus:State.thesaurus?Array.from(State.thesaurus.entries()):null,
       });
       await Cache.saveChunks(allChunks);
-      this.progress('✓ Klaar — sessie opgeslagen', 100);
-    } catch (e) {
-      console.warn('[Cache] Kon niet opslaan (quota?):', e);
-      this.progress('✓ Klaar (cache niet beschikbaar)', 100);
-    }
-
+      this.progress('✓ Klaar — sessie opgeslagen',100);
+    } catch(e) { console.warn('[Cache] Save failed:',e); this.progress('✓ Klaar',100); }
     UI.renderMermaid();
   },
 };
 
-
-// ── RESTORE helper ────────────────────────────────────────────────────────────
-/**
- * Restore a cached session: repopulate State, re-render documents, reload
- * TJS models if needed, then launch the app.
- */
+// ── RESTORE ───────────────────────────────────────────────────────────────────
 async function restoreSession(session, chunks, fileTexts) {
   State.backend    = session.backend;
-  State.url        = session.url || '';
+  State.chatUrl    = session.chatUrl  || session.url || 'http://127.0.0.1:1234';
+  State.embedUrl   = session.embedUrl || session.url || 'http://127.0.0.1:1234';
+  State.rerankUrl  = session.rerankUrl|| session.url || 'http://127.0.0.1:1234';
   State.chatModel  = session.chatModel || '';
   State.embedModel = session.embedModel || '';
-  State.rerankModel = session.rerankModel || '';
+  State.rerankModel= session.rerankModel || '';
   State.chunks     = chunks;
   State.thesaurus  = session.thesaurus ? new Map(session.thesaurus) : null;
-  State.chatHistory = [{ role: 'system',
-    content: Setup.buildSystemPrompt(session.fileNames || []) }];
+  State.chatHistory= [{role:'system',content:Setup.buildSystemPrompt(session.fileNames||[])}];
 
-  // Re-render documents in session file order
-  const names = session.fileNames || [];
-  const ordered = names.map(n => fileTexts.find(f => f.name === n)).filter(Boolean);
-  for (const { name, text } of ordered) UI.renderDocument(name, text);
+  const names=session.fileNames||[];
+  for (const name of names) {
+    const f=fileTexts.find(f=>f.name===name);
+    if (f) UI.renderDocument(f.name,f.text);
+  }
   UI.renderMermaid();
 
-  if (State.backend === 'transformers') {
+  if (State.backend==='transformers') {
     Setup.showPanel('panel-loading');
-    document.getElementById('load-text').textContent = 'TJS modellen herladen...';
-    document.getElementById('load-bar').value = 0;
-    try {
-      await Setup.loadTransformers();
-    } catch (e) {
-      alert('Modellen konden niet worden geladen: ' + e.message + '\n\nStart een nieuwe sessie.');
-      await Cache.clear();
-      Setup.showPanel('panel-choice');
-      return;
-    }
+    document.getElementById('load-text').textContent='TJS modellen herladen...';
+    document.getElementById('load-bar').value=0;
+    try { await Setup.loadTransformers(); }
+    catch(e) { alert('Modellen konden niet worden geladen: '+e.message); await Cache.clear(); Setup.showPanel('panel-choice'); return; }
   }
-
-  launchApp(session.backend +
-    (session.chatModel ? ' — ' + session.chatModel : ' — Browser AI'));
+  launchApp(session.backend+(session.chatModel?' — '+session.chatModel:' — Browser AI'));
 }
-
 
 // ── EVENT WIRING ──────────────────────────────────────────────────────────────
 
-// Panel A: restore
+// Mode tabs
+document.getElementById('tab-chat').addEventListener('click', () => {
+  document.getElementById('app').classList.remove('doc-mode');
+  document.getElementById('tab-chat').classList.add('active');
+  document.getElementById('tab-doc').classList.remove('active');
+});
+document.getElementById('tab-doc').addEventListener('click', () => {
+  document.getElementById('app').classList.add('doc-mode');
+  document.getElementById('tab-doc').classList.add('active');
+  document.getElementById('tab-chat').classList.remove('active');
+});
+
+// Restore
 document.getElementById('btn-restore').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-restore');
-  btn.disabled = true; btn.textContent = 'Herstellen...';
+  const btn=document.getElementById('btn-restore');
+  btn.disabled=true; btn.textContent='Herstellen...';
   try {
-    const session   = await Cache.loadSession();
-    const chunks    = await Cache.loadChunks();
-    const fileTexts = await Cache.loadFiles();
-    if (!session || !chunks?.length) {
-      alert('Cache lijkt beschadigd. Start een nieuwe sessie.');
-      await Cache.clear(); Setup.showPanel('panel-choice');
-      return;
-    }
-    await restoreSession(session, chunks, fileTexts);
-  } catch (e) {
-    alert('Herstel mislukt: ' + e.message); Setup.showPanel('panel-choice');
-  } finally { btn.disabled = false; btn.textContent = '↺ Herstellen — vectoren reeds berekend'; }
+    const session=await Cache.loadSession(), chunks=await Cache.loadChunks(), fileTexts=await Cache.loadFiles();
+    if (!session||!chunks?.length) { alert('Cache beschadigd.'); await Cache.clear(); Setup.showPanel('panel-choice'); return; }
+    await restoreSession(session,chunks,fileTexts);
+  } catch(e) { alert('Herstel mislukt: '+e.message); Setup.showPanel('panel-choice'); }
+  finally { btn.disabled=false; btn.textContent='↺ Herstellen — vectoren reeds berekend'; }
 });
-
 document.getElementById('btn-new-session').addEventListener('click', async () => {
-  await Cache.clear().catch(() => {});
-  Setup.showPanel('panel-choice');
+  await Cache.clear().catch(()=>{}); Setup.showPanel('panel-choice');
 });
 
-// Panel B: backend choice
-document.getElementById('btn-choice-lms').addEventListener('click', () => {
-  State.backend = 'lmstudio'; Setup.showPanel('panel-lmstudio');
-});
-document.getElementById('btn-choice-llama').addEventListener('click', () => {
-  State.backend = 'llamacpp'; Setup.showPanel('panel-llamacpp');
-});
-document.getElementById('btn-choice-tjs').addEventListener('click', () => {
-  State.backend = 'transformers'; Setup.showPanel('panel-transformers');
-});
+// Backend choice
+document.getElementById('btn-choice-lms').addEventListener('click', () => { State.backend='lmstudio'; Setup.showPanel('panel-lmstudio'); });
+document.getElementById('btn-choice-llama').addEventListener('click', () => { State.backend='llamacpp'; Setup.showPanel('panel-llamacpp'); });
+document.getElementById('btn-choice-tjs').addEventListener('click', () => { State.backend='transformers'; Setup.showPanel('panel-transformers'); });
 
-// Panel C: LM Studio
+// LM Studio
 document.getElementById('btn-lms-connect').addEventListener('click', async () => {
-  const url = document.getElementById('lms-url').value.replace(/\/+$/, '');
-  const btn = document.getElementById('btn-lms-connect');
-  btn.disabled = true; btn.textContent = 'Verbinden...'; State.url = url;
+  const url=document.getElementById('lms-url').value.replace(/\/+$/,'');
+  const btn=document.getElementById('btn-lms-connect');
+  btn.disabled=true; btn.textContent='Verbinden...';
+  State.chatUrl=State.embedUrl=State.rerankUrl=url;
   try {
-    const models = await Setup.loadApiModels(url);
-    Setup.populateSelect('lms-chat',  models, ['granite','instruct']);
-    Setup.populateSelect('lms-embed', models, ['nomic','embed']);
-    document.getElementById('lms-model-selects').hidden = false; btn.hidden = true;
-  } catch {
-    alert('Kan LM Studio niet bereiken. Controleer server + CORS.');
-    btn.disabled = false; btn.textContent = 'Verbind met LM Studio';
-  }
+    const models=await Setup.loadApiModels(url);
+    Setup.populateSelect('lms-chat',models,['granite','instruct']);
+    Setup.populateSelect('lms-embed',models,['nomic','embed']);
+    document.getElementById('lms-model-selects').hidden=false; btn.hidden=true;
+  } catch { alert('Kan LM Studio niet bereiken. Controleer server + CORS.'); btn.disabled=false; btn.textContent='Verbind met LM Studio'; }
 });
-
 document.getElementById('btn-lms-start').addEventListener('click', async () => {
-  const files = document.getElementById('lms-files').files;
+  const files=document.getElementById('lms-files').files;
   if (!files.length) return alert('Selecteer minstens één markdown bestand.');
-  State.chatModel  = document.getElementById('lms-chat').value;
-  State.embedModel = document.getElementById('lms-embed').value;
-  document.getElementById('btn-lms-start').hidden = true;
-  Setup.showPanel('panel-loading');
-  await Setup.ingestFiles(files);
-  launchApp('LM Studio — ' + State.chatModel);
+  State.chatModel=document.getElementById('lms-chat').value;
+  State.embedModel=document.getElementById('lms-embed').value;
+  document.getElementById('btn-lms-start').hidden=true; Setup.showPanel('panel-loading');
+  await Setup.ingestFiles(files); launchApp('LM Studio — '+State.chatModel);
 });
 
-// Panel D: llama.cpp
+// llama.cpp — per-port URLs
 document.getElementById('btn-llama-connect').addEventListener('click', async () => {
-  const url = document.getElementById('llama-url').value.replace(/\/+$/, '');
-  const btn = document.getElementById('btn-llama-connect');
-  btn.disabled = true; btn.textContent = 'Verbinden...'; State.url = url;
+  State.chatUrl  = document.getElementById('llama-chat-url').value.replace(/\/+$/,'');
+  State.embedUrl = document.getElementById('llama-embed-url').value.replace(/\/+$/,'');
+  State.rerankUrl= document.getElementById('llama-rerank-url').value.replace(/\/+$/,'');
+  const btn=document.getElementById('btn-llama-connect');
+  btn.disabled=true; btn.textContent='Verbinden...';
   try {
-    const models    = await Setup.loadApiModels(url);
-    const withNone  = ['(geen reranker)', ...models];
-    Setup.populateSelect('llama-chat',   models,   ['granite','instruct']);
-    Setup.populateSelect('llama-embed',  models,   ['nomic','embed']);
-    Setup.populateSelect('llama-rerank', withNone, ['rerank','bge']);
-    document.getElementById('llama-model-selects').hidden = false; btn.hidden = true;
-  } catch {
-    alert('Kan llama.cpp niet bereiken. Controleer server + CORS.');
-    btn.disabled = false; btn.textContent = 'Verbind met llama.cpp';
-  }
+    const [chatR,embedR,rerankR]=await Promise.allSettled([
+      Setup.loadApiModels(State.chatUrl),
+      Setup.loadApiModels(State.embedUrl),
+      Setup.loadApiModels(State.rerankUrl),
+    ]);
+    if (chatR.status==='fulfilled')  Setup.populateSelect('llama-chat',  chatR.value,  ['granite','instruct']);
+    if (embedR.status==='fulfilled') Setup.populateSelect('llama-embed', embedR.value, ['nomic','embed']);
+    const withNone=['(geen reranker)',...(rerankR.status==='fulfilled'?rerankR.value:[])];
+    Setup.populateSelect('llama-rerank',withNone,['rerank','bge']);
+    document.getElementById('llama-model-selects').hidden=false; btn.hidden=true;
+  } catch(e) { alert('Verbindingsfout: '+e.message); btn.disabled=false; btn.textContent='Verbind met alle poorten'; }
 });
-
 document.getElementById('btn-llama-start').addEventListener('click', async () => {
-  const files = document.getElementById('llama-files').files;
+  const files=document.getElementById('llama-files').files;
   if (!files.length) return alert('Selecteer minstens één markdown bestand.');
-  State.chatModel   = document.getElementById('llama-chat').value;
-  State.embedModel  = document.getElementById('llama-embed').value;
-  const rerank      = document.getElementById('llama-rerank').value;
-  State.rerankModel = rerank === '(geen reranker)' ? '' : rerank;
-  document.getElementById('btn-llama-start').hidden = true;
-  Setup.showPanel('panel-loading');
+  State.chatModel  =document.getElementById('llama-chat').value;
+  State.embedModel =document.getElementById('llama-embed').value;
+  const rerank     =document.getElementById('llama-rerank').value;
+  State.rerankModel=rerank==='(geen reranker)'?'':rerank;
+  document.getElementById('btn-llama-start').hidden=true; Setup.showPanel('panel-loading');
   await Setup.ingestFiles(files);
-  launchApp('llama.cpp — ' + State.chatModel + (State.rerankModel ? ' + reranker' : ''));
+  launchApp('llama.cpp — '+State.chatModel+(State.rerankModel?' + reranker':''));
 });
 
-// Panel E: Transformers.js
+// Transformers.js
 document.getElementById('btn-tjs-load').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-tjs-load');
-  btn.disabled = true;
-  document.getElementById('tjs-progress').hidden = false;
-  try {
-    await Setup.loadTransformers();
-    document.getElementById('tjs-file-section').hidden = false;
-  } catch (e) {
-    document.getElementById('tjs-prog-text').textContent = 'Fout: ' + e.message;
-    btn.disabled = false;
-  }
+  const btn=document.getElementById('btn-tjs-load'); btn.disabled=true;
+  document.getElementById('tjs-progress').hidden=false;
+  try { await Setup.loadTransformers(); document.getElementById('tjs-file-section').hidden=false; }
+  catch(e) { document.getElementById('tjs-prog-text').textContent='Fout: '+e.message; btn.disabled=false; }
 });
-
 document.getElementById('btn-tjs-start').addEventListener('click', async () => {
-  const files = document.getElementById('tjs-files').files;
+  const files=document.getElementById('tjs-files').files;
   if (!files.length) return alert('Selecteer minstens één markdown bestand.');
-  document.getElementById('btn-tjs-start').hidden = true;
-  Setup.showPanel('panel-loading');
-  await Setup.ingestFiles(files);
-  launchApp('Browser AI — Granite 4.0 Micro');
+  document.getElementById('btn-tjs-start').hidden=true; Setup.showPanel('panel-loading');
+  await Setup.ingestFiles(files); launchApp('Browser AI — Granite 4.0 Micro');
 });
 
 // Chat controls
 document.getElementById('new-search-btn').addEventListener('click', () => {
-  State.forceNewSearch = true; State.lastChunks = null;
-  const btn = document.getElementById('new-search-btn');
-  btn.style.background = 'var(--primary)';
-  setTimeout(() => { btn.style.background = '#888'; }, 800);
+  State.forceNewSearch=true; State.lastChunks=null;
+  const btn=document.getElementById('new-search-btn');
+  btn.style.background='var(--primary)'; setTimeout(()=>{btn.style.background='#888';},800);
 });
-
 document.getElementById('input-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const input = document.getElementById('chat-input');
-  const sendBtn = document.getElementById('send-btn');
-  const text = input.value.trim(); if (!text) return;
-  input.value = ''; UI.addMessage('user', text); UI.clearHighlights();
-  sendBtn.disabled = true;
+  const input=document.getElementById('chat-input'), sendBtn=document.getElementById('send-btn');
+  const text=input.value.trim(); if (!text) return;
+  input.value=''; UI.addMessage('user',text); UI.clearHighlights(); sendBtn.disabled=true;
   try { await Pipeline.run(text); }
-  catch (err) { UI.addMessage('bot', 'Systeemfout: ' + err.message); console.error(err); }
-  finally { sendBtn.disabled = false; }
+  catch(err) { UI.addMessage('bot','Systeemfout: '+err.message); console.error(err); }
+  finally { sendBtn.disabled=false; }
 });
-
 document.getElementById('chat-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault(); document.getElementById('input-form').requestSubmit();
-  }
+  if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); document.getElementById('input-form').requestSubmit(); }
 });
 
-// Clear documents button (in docs pane header)
+// Clear documents
 document.getElementById('clear-docs-btn').addEventListener('click', async () => {
-  if (!confirm('Wis gecachede documenten en start een nieuwe sessie?')) return;
-  await Cache.clear().catch(() => {});
-  // Reset all mutable state
-  Object.assign(State, {
-    backend: null, url: 'http://127.0.0.1:1234', chatModel: '', embedModel: '', rerankModel: '',
-    tjsTokenizer: null, tjsEmbedModel: null, tjsRerankTokenizer: null, tjsRerankModel: null,
-    tjsLLMPipeline: null, tjsMath: null, TextStreamer: null,
-    chunks: [], chatHistory: [], jsonState: { intent: 'Onbekend', facts_gathered: [] },
-    lastChunks: null, forceNewSearch: false, thesaurus: null,
+  if (!confirm('Wis gecachede documenten en herstart?')) return;
+  await Cache.clear().catch(()=>{});
+  Object.assign(State,{
+    backend:null,chatUrl:'http://127.0.0.1:1234',embedUrl:'http://127.0.0.1:1234',
+    rerankUrl:'http://127.0.0.1:1234',chatModel:'',embedModel:'',rerankModel:'',
+    tjsTokenizer:null,tjsEmbedModel:null,tjsRerankTokenizer:null,tjsRerankModel:null,
+    tjsLLMPipeline:null,tjsMath:null,TextStreamer:null,
+    chunks:[],chatHistory:[],jsonState:{intent:'Onbekend',facts_gathered:[]},
+    lastChunks:null,forceNewSearch:false,thesaurus:null,
   });
-  document.getElementById('docs-container').innerHTML = '';
-  document.getElementById('chat-history').innerHTML = '';
-  document.getElementById('state-output').textContent = '{\n  "status": "Wachtend op invoer..."\n}';
-  document.getElementById('chat-label').textContent = 'Fietsbel CE — Multidisciplinair Overleg';
-  document.getElementById('app').hidden = true;
-  Setup.showPanel('panel-choice');
-  document.getElementById('setup-dialog').showModal();
+  document.getElementById('docs-container').innerHTML='';
+  document.getElementById('chat-history').innerHTML='';
+  document.getElementById('state-output').textContent='{\n  "status": "Wachtend op invoer..."\n}';
+  document.getElementById('chat-label').textContent='Fietsbel CE — Multidisciplinair Overleg';
+  document.getElementById('app').hidden=true;
+  Setup.showPanel('panel-choice'); document.getElementById('setup-dialog').showModal();
 });
 
-// ── STANDALONE HELPERS ────────────────────────────────────────────────────────
+// Document editor controls
+document.getElementById('template-upload').addEventListener('change', async e => {
+  const file=e.target.files[0]; if (!file) return;
+  const text=await file.text();
+  document.getElementById('doc-source').value=text;
+  Doc.save(text); Doc.render(text);
+  document.getElementById('doc-status').textContent='✓ Template geladen: '+file.name;
+});
+
+let docRenderTimer=null;
+document.getElementById('doc-source').addEventListener('input', () => {
+  const source=document.getElementById('doc-source').value;
+  Doc.save(source);
+  clearTimeout(docRenderTimer);
+  docRenderTimer=setTimeout(()=>Doc.render(source),350);
+});
+
+// Event delegation for doc run buttons
+document.getElementById('doc-preview').addEventListener('click', async e => {
+  const btn=e.target.closest('[data-run]');
+  if (!btn||btn.disabled||State.docRunning) return;
+  const idx=parseInt(btn.dataset.run);
+  await Doc.runBlockByIndex(idx);
+});
+
+document.getElementById('doc-play-all').addEventListener('click', () => Doc.runAll());
+document.getElementById('doc-stop').addEventListener('click', () => {
+  State.docStopRequested=true;
+  document.getElementById('doc-status').textContent='⏹ Stoppen...';
+});
+document.getElementById('doc-download').addEventListener('click', () => {
+  const source=document.getElementById('doc-source').value;
+  const blob=new Blob([source],{type:'text/markdown'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='document.md'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
 function launchApp(label) {
-  const thesNote = State.thesaurus
-    ? ' · 📚 ' + Array.from(State.thesaurus.entries())
-        .filter(([k, v]) => k === v.term.toLowerCase()).length + ' termen'
+  const thesNote=State.thesaurus
+    ? ' · 📚 '+Array.from(State.thesaurus.entries()).filter(([k,v])=>k===v.term.toLowerCase()).length+' termen'
     : '';
-  document.getElementById('chat-label').textContent = 'Fietsbel CE — ' + label + thesNote;
+  document.getElementById('chat-label').textContent='Fietsbel CE — '+label+thesNote;
   document.getElementById('setup-dialog').close();
-  document.getElementById('app').hidden = false;
+  document.getElementById('app').hidden=false;
+
+  // Restore template from localStorage
+  const savedDoc=Doc.load();
+  if (savedDoc) {
+    document.getElementById('doc-source').value=savedDoc;
+    Doc.render(savedDoc);
+  }
 }
 
-/** Console utility: wipe all caches (IndexedDB + service worker + localStorage). */
 window.nukeTjsCache = async () => {
-  await Cache.clear().catch(() => {});
-  if ('caches' in window) {
-    const keys = await caches.keys();
-    await Promise.all(keys.map(k => caches.delete(k)));
-  }
-  localStorage.clear();
-  console.log('All caches cleared. Reload to start fresh.');
+  await Cache.clear().catch(()=>{});
+  if ('caches' in window) { const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+  localStorage.clear(); console.log('All caches cleared.');
 };
-
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 (async function init() {
-  if (typeof marked === 'undefined') {
-    alert('CRITICAL: marked.min.js ontbreekt. Plaats het naast index.html.');
-  }
-  if (typeof mermaid !== 'undefined') {
-    mermaid.initialize({ startOnLoad: false, theme: 'default' });
-  }
-  document.getElementById('setup-dialog').addEventListener('cancel', e => e.preventDefault());
+  if (typeof marked==='undefined') alert('CRITICAL: marked.min.js ontbreekt.');
+  if (typeof mermaid!=='undefined') mermaid.initialize({startOnLoad:false,theme:'default'});
+  document.getElementById('setup-dialog').addEventListener('cancel',e=>e.preventDefault());
 
-  // Check IndexedDB for a cached session from a previous page load.
-  // If found: show the restore panel so the user can skip re-embedding.
   try {
-    const session = await Cache.loadSession();
-    const chunks  = await Cache.loadChunks();
-    if (session && chunks?.length > 0) {
-      const date = new Date(session.savedAt).toLocaleString('nl-NL',
-        { dateStyle: 'short', timeStyle: 'short' });
-      document.getElementById('restore-info').innerHTML =
-        '<strong>Backend:</strong> '    + (session.backend || 'onbekend') + '<br>' +
-        '<strong>Model:</strong> '      + (session.chatModel || 'Browser AI') + '<br>' +
-        '<strong>Documenten:</strong> ' + (session.fileNames || []).join(', ') + '<br>' +
-        '<strong>Chunks:</strong> '     + chunks.length + ' vectorized<br>' +
-        '<strong>Opgeslagen:</strong> ' + date;
+    const session=await Cache.loadSession(), chunks=await Cache.loadChunks();
+    if (session&&chunks?.length>0) {
+      const fileTexts=await Cache.loadFiles();
+      const date=new Date(session.savedAt).toLocaleString('nl-NL',{dateStyle:'short',timeStyle:'short'});
+      document.getElementById('restore-info').innerHTML=
+        '<strong>Backend:</strong> '+(session.backend||'?')+'<br>'+
+        '<strong>Model:</strong> '+(session.chatModel||'Browser AI')+'<br>'+
+        '<strong>Chat URL:</strong> '+(session.chatUrl||session.url||'')+'<br>'+
+        '<strong>Documenten:</strong> '+(session.fileNames||[]).join(', ')+'<br>'+
+        '<strong>Chunks:</strong> '+chunks.length+' vectorized<br>'+
+        '<strong>Opgeslagen:</strong> '+date;
       Setup.showPanel('panel-restore');
       document.getElementById('setup-dialog').showModal();
       return;
     }
-  } catch (e) {
-    console.warn('[Cache] Fout bij laden:', e);
-  }
+  } catch(e) { console.warn('[Cache] Load error:',e); }
 
   Setup.showPanel('panel-choice');
   document.getElementById('setup-dialog').showModal();
