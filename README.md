@@ -136,8 +136,8 @@ Click **⬇ Download .md** to export your template, all generated outputs, and a
 ### Minimal Benchmarks
 Hardware: Ryzen 7840U, 32 GB RAM.
 Workload: 11 markdown files.
-* Chunking: 2 s.
-* "toneelstuk" prompt: 18 s.
+* Chunking: tbd s.
+* "toneelstuk" prompt: tbd s.
 
 Hardware: i9, rx9070xt, 128 GB RAM.
 Workload: 11 markdown files.
@@ -146,7 +146,15 @@ Workload: 11 markdown files.
 * "toneelstuk" prompt: 33 s.
 **LMstudio version (no reranking):**
 * Chunking: 25 s.
-* "toneelstuk" prompt: 11 s.  
+* "toneelstuk" prompt: 11 s.
+
+Hardware: Z1 Extreme, 16G ram
+**WebGPU version:**
+* Chunking: 3:45 s.
+* "toneelstuk" prompt: 3:15 s.
+**LMstudio version (no reranking):**
+* Chunking: 1:08 s.
+* "toneelstuk" prompt: 1:03 s.
 
 ### Security & Privacy
 Documents remain local. No network requests are made except model downloads (Browser AI) and configured inference endpoints.
