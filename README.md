@@ -20,7 +20,7 @@ Fietsbel CE is a provenance-first, human-in-the-loop RAG workbench that turns do
 | `marked.min.js` | ✅ Yes | Markdown parser. Download from marked.js.org and place next to `fietsbel-ce.html`. |
 | `transformers.min.js` | ❌ Optional | Only for **Browser AI** (no external server). Download from huggingface.co/docs/transformers.js. |
 | `mermaid.min.js` | ❌ Optional | Only if documents contain Mermaid diagrams. |
-| Markdown documents | ✅ Yes | Your `.md` files to analyze. |
+| Markdown documents | ✅ Yes | Your `.md` files to analyze. (or the pasta-related files in md-demo) |
 | `thesaurus.md` | ❌ Optional | Synonym definitions for smarter search. |
 | `template.md` | ❌ Optional | Report template for the Template Editor. |
 
@@ -49,6 +49,13 @@ Fietsbel CE itself is serverless, but modern browsers restrict some APIs under `
 * Optimized llama.cpp demonstrates performance.
 * Run specialized `llama-server` instances for Chat/LLM, Embedding, and optionally Reranking on different ports.
 * In Fietsbel CE, choose **"llama.cpp"**, enter the URLs, connect, and pick models.
+
+### Pasta-related demo
+Download the files in the md-demo directory. They are wikipedia pages converted to markdown with r.jina.ai. They would benefit from being cleaned up, but this demo is about showing what "noisy" markdown files can accomplish. It includes a rudimentary thesaurus.md, for query expansion and wikification. Also included, is a template.md. That is for document-generation purposes.
+#### Usage
+* select all markdown files except template.md when picking the back-end
+* In the chat-screen, ask the question: "ik wil een toneelstuk schrijven over de geschiedenis van pasta. het moet historisch accuraat zijn. welke personages, gebeurtenissen en locaties zijn geschikt voor een dramatische vertelling?" Or similar in your own language.
+* In the template editor, load the template.md. It may be that you need to manually add an remove a line before the template renders correctly. Then you may press "run" on each block (works from top to bottom, the evaluation blocks eval the prompt-output block above it). Or you may chose to click "Alles uitvoeren" above, to run all blocks. Note that in the evaluation, the last column is a "do-rag" boolean that switches on/off the RAG capability per row.
 
 ### Chatting with Documents
 
@@ -128,10 +135,18 @@ Click **⬇ Download .md** to export your template, all generated outputs, and a
 
 ### Minimal Benchmarks
 Hardware: Ryzen 7840U, 32 GB RAM.
-Workload: 10 markdown files.
+Workload: 11 markdown files.
 * Chunking: 2 s.
-* Embedding: 18 s.
-* Retrieval: <100 ms.
+* "toneelstuk" prompt: 18 s.
+
+Hardware: i9, rx9070xt, 128 GB RAM.
+Workload: 11 markdown files.
+**WebGPU version:**
+* Chunking: 33 s.
+* "toneelstuk" prompt: 33 s.
+**LMstudio version (no reranking):**
+* Chunking: 25 s.
+* "toneelstuk" prompt: 11 s.  
 
 ### Security & Privacy
 Documents remain local. No network requests are made except model downloads (Browser AI) and configured inference endpoints.
