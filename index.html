@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fietsbel CE — Cooperative, Provenance-first RAG </title>
+  <title>Fietsbel CE — Cooperative, Provenance-first RAG</title>
   <!--
     Required files (next to index.html): marked.min.js
     Optional: transformers.min.js, mermaid.min.js
@@ -317,7 +317,7 @@
 
 <script>
 /* =========================================================================
- * Fietsbel CE — cooperative provenance-first RAG Chat + Template Document Builder
+ * Fietsbel CE — Cooperative, Provenance-First RAG Chat + Template Document Builder
  *
  * External files: marked.min.js (required), transformers.min.js (optional),
  *                 mermaid.min.js (optional)
@@ -939,6 +939,16 @@ const Thesaurus = {
       .filter(([k,v])=>k===v.term.toLowerCase()&&v.definition)
       .map(([,v])=>v).sort((a,b)=>b.term.length-a.term.length);
     if (!entries.length) return;
+
+    // Single combined regex (longest terms first, so e.g. "Al dente" matches
+    // before a hypothetical shorter overlapping term would). This finds ALL
+    // term occurrences in one pass per text node — the previous per-term loop
+    // with `break` only ever wikified the first matching term in a sentence
+    // and ignored any others.
+    const termByLower = new Map(entries.map(e => [e.term.toLowerCase(), e]));
+    const pattern = entries.map(e => escapeRegex(e.term)).join('|');
+    const combined = new RegExp('\\b(?:'+pattern+')\\b','gi');
+
     const SKIP=new Set(['ABBR','A','CODE','PRE','SCRIPT','STYLE']);
     const walkNode=node => {
       const children=Array.from(node.childNodes);
@@ -946,20 +956,20 @@ const Thesaurus = {
         if (child.nodeType===Node.TEXT_NODE) {
           if (SKIP.has(child.parentElement?.tagName)) continue;
           const original=child.textContent; if (!original.trim()) continue;
-          for (const {term,definition} of entries) {
-            const re=new RegExp('\\b'+escapeRegex(term)+'\\b','gi');
-            if (!re.test(original)) continue;
-            const frag=document.createDocumentFragment();
-            let last=0; re.lastIndex=0; let match;
-            while ((match=re.exec(original))!==null) {
-              if (match.index>last) frag.append(document.createTextNode(original.slice(last,match.index)));
-              const abbr=document.createElement('abbr');
-              abbr.className='wiki-term'; abbr.title=definition; abbr.textContent=match[0];
-              frag.append(abbr); last=match.index+match[0].length;
-            }
-            if (last<original.length) frag.append(document.createTextNode(original.slice(last)));
-            child.parentNode.replaceChild(frag,child); break;
+          combined.lastIndex=0;
+          if (!combined.test(original)) continue;
+          const frag=document.createDocumentFragment();
+          let last=0; combined.lastIndex=0; let match;
+          while ((match=combined.exec(original))!==null) {
+            const entry = termByLower.get(match[0].toLowerCase());
+            if (!entry) continue; // shouldn't happen, but stay safe
+            if (match.index>last) frag.append(document.createTextNode(original.slice(last,match.index)));
+            const abbr=document.createElement('abbr');
+            abbr.className='wiki-term'; abbr.title=entry.definition; abbr.textContent=match[0];
+            frag.append(abbr); last=match.index+match[0].length;
           }
+          if (last<original.length) frag.append(document.createTextNode(original.slice(last)));
+          child.parentNode.replaceChild(frag,child);
         } else if (child.nodeType===Node.ELEMENT_NODE&&!SKIP.has(child.tagName)) { walkNode(child); }
       }
     };
@@ -1332,6 +1342,7 @@ const Pipeline = {
         p3body.innerHTML=typeof marked!=='undefined'?marked.parse(
           p3text.replace(/\[SHORT ANSWER\]/gi,'').replace(/\[FOLLOW-UP\]/gi,'\n\n---\n\n**Mogelijke vervolgvragen:**\n\n').trim()
         ):p3text;
+        if (State.thesaurus) Thesaurus.wikify(p3body);
         p3el.append(p3body);
         p3el.querySelectorAll('blockquote p, blockquote').forEach(el=>{
           const q=el.textContent.trim().replace(/^>\s*/,'');
@@ -1388,6 +1399,22 @@ const Doc = {
   RESULTS_KEY:      'fietsbel-template-results',
   PROVENANCE_KEY:   'fietsbel-template-provenance',
 
+  /**
+   * Render markdown to HTML, then apply thesaurus wikification.
+   * wikify() operates on a live DOM tree, not a string — so we render into
+   * a detached container, wikify it, and return the resulting innerHTML.
+   * Used for prompt/evaluation block outputs in the template editor, so
+   * generated document prose gets the same <abbr title="..."> tooltips as
+   * chat answers.
+   */
+  wikifyHtml(html) {
+    if (!State.thesaurus) return html;
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    Thesaurus.wikify(div);
+    return div.innerHTML;
+  },
+
   /** Short, stable hash of a string (FNV-1a, 32-bit hex). Used as block key. */
   hashBlock(str) {
     let h = 0x811c9dc5;
@@ -1399,14 +1426,27 @@ const Doc = {
   },
 
   /** Parse source into typed blocks: text | prompt | evaluation | (other fence) */
+  /**
+   * Parse source into typed blocks: text | prompt | evaluation | (other fence).
+   * Allows up to 3 leading spaces before a fence (CommonMark-compatible —
+   * 4+ spaces would make it an indented code block instead). The opening
+   * fence's indentation is captured and stripped from content lines and the
+   * closing fence, so `retrieval:`/`rewrite:`/`|` line-prefix matching in
+   * parsePromptBlock/parseEvalRows works regardless of how the user indented
+   * the block in the editor.
+   */
   parseBlocks(source) {
-    const blocks=[], re=/^```(\w+)\n([\s\S]*?)^```[ \t]*$/gm;
+    const blocks=[], re=/^( {0,3})```(\w+)\n([\s\S]*?)^\1```[ \t]*$/gm;
     let last=0, match;
     while ((match=re.exec(source))!==null) {
       if (match.index>last)
         blocks.push({type:'text',content:source.slice(last,match.index),start:last,end:match.index});
-      const type=match[1].toLowerCase();
-      blocks.push({type,content:match[2],raw:match[0],start:match.index,end:match.index+match[0].length,
+      const type=match[1+1].toLowerCase(); // group 2: type (group 1 is indentation)
+      const indent=match[1];
+      const content = indent
+        ? match[3].split('\n').map(l=>l.startsWith(indent)?l.slice(indent.length):l).join('\n')
+        : match[3];
+      blocks.push({type,content,raw:match[0],start:match.index,end:match.index+match[0].length,
         key:(type==='prompt'||type==='evaluation')?this.hashBlock(match[0]):null});
       last=match.index+match[0].length;
     }
@@ -1665,7 +1705,7 @@ const Doc = {
           </div>
         </div>`;
         const result=State.docResults[block.key];
-        if (result) html+=`<div class="doc-output">${typeof marked!=='undefined'?marked.parse(result):result}</div>`;
+        if (result) html+=`<div class="doc-output">${this.wikifyHtml(typeof marked!=='undefined'?marked.parse(result):result)}</div>`;
       } else if (block.type==='evaluation') {
         const rows=this.parseEvalRows(block.content);
         html+=`<div class="doc-block" data-block="${i}">
@@ -1678,7 +1718,7 @@ const Doc = {
           </div>
         </div>`;
         const result=State.docResults[block.key];
-        if (result) html+=`<div class="doc-output">${typeof marked!=='undefined'?marked.parse(result):result}</div>`;
+        if (result) html+=`<div class="doc-output">${this.wikifyHtml(typeof marked!=='undefined'?marked.parse(result):result)}</div>`;
       } else {
         // Unknown fence type (incl. legacy ```output) — render as-is via marked
         html+=typeof marked!=='undefined'?marked.parse(block.raw):escapeHtml(block.raw);
