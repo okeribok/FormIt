@@ -134,10 +134,11 @@ Click **⬇ Download .md** to export your template, all generated outputs, and a
 | llama.cpp | model dependent |
 
 ### Minimal Benchmarks
-Hardware: Ryzen 7840U, 32 GB RAM.
+Hardware: Ryzen 7540U, 32 GB RAM.
 Workload: 11 markdown files.
-* Chunking: tbd s.
-* "toneelstuk" prompt: tbd s.
+* Chunking: 6:45 (405s).
+* "toneelstuk" prompt: 6:45 (405s).
+Projected performance increase with llama.cpp: 300%
 
 Hardware: i9, rx9070xt, 128 GB RAM.
 Workload: 11 markdown files.
@@ -150,11 +151,16 @@ Workload: 11 markdown files.
 
 Hardware: Z1 Extreme, 16G ram
 **WebGPU version:**
-* Chunking: 3:45 s.
-* "toneelstuk" prompt: 3:15 s.
+* Chunking: 3:45 (225s).
+* "toneelstuk" prompt: 3:15 (205s).
 **LMstudio version (no reranking):**
-* Chunking: 1:08 s.
-* "toneelstuk" prompt: 1:03 s.
+* Chunking: 1:08 (68s).
+* "toneelstuk" prompt: 1:03 (63s).
+
+Cloud services (document upload + question)
+* proton Lumo: 45s (could not use all documents)
+* Mistral Vibe "fast" 1:38 (98s)
+* vlam-chat: no response
 
 ### Security & Privacy
 Documents remain local. No network requests are made except model downloads (Browser AI) and configured inference endpoints.
