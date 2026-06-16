@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fietsbel CE — Cooperative, Provenance-first RAG</title>
+  <title>Fietsbel CE — Cooperative, Provenance-first RAG 260616</title>
   <!--
     Required files (next to index.html): marked.min.js
     Optional: transformers.min.js, mermaid.min.js
@@ -317,7 +317,7 @@
 
 <script>
 /* =========================================================================
- * Fietsbel CE — Cooperative, Provenance-First RAG Chat + Template Document Builder
+ * Fietsbel CE — Cooperative, Provenance-first RAG Chat + Template Document Builder
  *
  * External files: marked.min.js (required), transformers.min.js (optional),
  *                 mermaid.min.js (optional)
@@ -343,23 +343,30 @@
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const Config = Object.freeze({
-  // Body chunk size budget. Reserves headroom for the heading-breadcrumb
-  // prefix (added on top of the body) so total chunk size stays under the
-  // 512-token limit of multilingual embedders (e.g. nomic-embed-text-v2-moe,
-  // used via LM Studio/llama.cpp for better Dutch performance). At ~3.5-4
-  // chars/token for Dutch, 512 tokens ≈ 1800-2000 chars; 1100 body + ~200-300
-  // breadcrumb stays comfortably under that even with nested headings.
-  // nomic-embed-text-v1.5 (Browser AI / TJS) has an 8192-token context, so
-  // this budget is conservative there too — no downside.
-  CHUNK_MAX_CHARS:          1100,
-  CHUNK_SLICE:              1000,
-  CHUNK_OVERLAP:             200,
+  // Body chunk size budget. Tuned so the post-chunking EMBED_TOKEN_CHAR_CEILING
+  // guard (below) acts as a rare safety net (~1.05x chunk growth) rather than
+  // the primary size mechanism (which it was at 1100/1000/200 — ~1.8x growth,
+  // since most chunks exceeded the embedder's 512-token limit and got
+  // re-split anyway). Markdown-heavy text (headers, lists, bold/italic,
+  // breadcrumbs) runs ~2-2.5 chars/token in BPE tokenizers, NOT the
+  // ~3.5-4 chars/token typical of plain prose — the original estimate
+  // assumed prose density and was wrong by ~2x.
+  CHUNK_MAX_CHARS:           900,
+  CHUNK_SLICE:               800,
+  CHUNK_OVERLAP:             150,
   // If structural chunking produces ≤2 chunks averaging above this size,
   // the document likely has no usable headings/paragraph breaks ("dirty file").
   // Fall back to overlapping fixed-size slices for better retrieval granularity.
   CHUNK_DIRTY_THRESHOLD:    2500,
   RETRIEVAL_CANDIDATES:       12,
   RETRIEVAL_TOP_K:             5,
+  // Maximum fraction of RETRIEVAL_CANDIDATES that may come from a single
+  // document. Without this, a document with far more chunks than others
+  // (e.g. 507 vs 88-249 in a mixed corpus) statistically dominates every
+  // RRF rank list purely by volume — more chunks means more "tickets" to
+  // land in any given rank position, regardless of topical relevance.
+  // 0.5 means: of 12 candidates, at most 6 may come from one document.
+  MAX_CANDIDATE_SHARE_PER_DOC: 0.5,
   HISTORY_MAX_TURNS:           8,
   PASS0_MAX_TOKENS:          160,
   RRF_K:                      60,   // Reciprocal Rank Fusion constant
@@ -370,6 +377,25 @@ const Config = Object.freeze({
   // the enum list itself, like "vergelijking|algemeen|concepts") is treated
   // as a Pass 0 parse failure and falls back to 'algemeen'.
   ANSWER_SHAPES: ['regelgeving','procedure','definitie','bedrag','termijn','vergelijking','algemeen'],
+
+  // ── Embedding token-limit guard ──────────────────────────────────────────
+  // Multilingual embedders (nomic-embed-text-v2-moe via LM Studio/llama.cpp)
+  // hard-cap input at 512 tokens — exceeding this BLOCKS the embedding
+  // request entirely in many server implementations (not silent truncation).
+  // CHUNK_MAX_CHARS alone is not a reliable proxy: markdown-heavy text
+  // (headers, lists, tables, bold/italic markers, the heading breadcrumb
+  // itself) commonly runs ~2-2.5 chars/token in BPE tokenizers, NOT the
+  // ~3.5-4 chars/token typical of plain prose. A 1100-char chunk can be
+  // ~500 tokens at worst-case density — already over budget before the
+  // breadcrumb is even added.
+  //
+  // EMBED_TOKEN_LIMIT is the hard ceiling enforced post-chunking:
+  //   - TJS backend: measured exactly via the loaded tokenizer
+  //   - API backends (no client-side tokenizer): enforced via
+  //     EMBED_TOKEN_CHAR_CEILING, a conservative char-based proxy at
+  //     worst-case density, with safety margin.
+  EMBED_TOKEN_LIMIT:         480,   // hard limit 512, 32-token safety margin
+  EMBED_TOKEN_CHAR_CEILING:  950,   // 480 tokens * ~2.0 chars/token (worst case)
 });
 
 // ── PROMPTS ───────────────────────────────────────────────────────────────────
@@ -686,6 +712,78 @@ const Chunker = {
 
     return chunks;
   },
+
+  /**
+   * Hard post-chunking guard: ensures no chunk exceeds the embedder's token
+   * limit (512 for nomic-embed-text-v2-moe and similar multilingual models).
+   * CHUNK_MAX_CHARS is a generation-time target, not a guarantee — heading
+   * breadcrumbs, the oversized-token slicing path, and markdown-heavy
+   * content (high token density) can all produce chunks that exceed the
+   * limit. This is the last line of defense before chunks are sent to the
+   * embedding endpoint.
+   *
+   * TJS backend: measures EXACT token count via the loaded tokenizer and
+   * re-splits any chunk over EMBED_TOKEN_LIMIT.
+   * API backends: no client-side tokenizer available — uses
+   * EMBED_TOKEN_CHAR_CEILING (a conservative worst-case char proxy) instead.
+   *
+   * Re-split chunks preserve the original heading breadcrumb on each piece
+   * and get suffixed IDs (e.g. "_3a", "_3b") to stay unique.
+   *
+   * @param {Array} chunks - output of chunk()
+   * @returns {Promise<Array>} chunks, with any oversized ones re-split
+   */
+  async enforceTokenLimit(chunks) {
+    const useTokenizer = State.backend === 'transformers' && State.tjsTokenizer;
+    const out = [];
+    let resplitCount = 0;
+
+    for (const c of chunks) {
+      let tokenCount;
+      if (useTokenizer) {
+        try {
+          tokenCount = State.tjsTokenizer(c.text).input_ids.size
+            ?? State.tjsTokenizer(c.text).input_ids.length
+            ?? State.tjsTokenizer(c.text).input_ids.data?.length;
+        } catch { tokenCount = null; }
+      }
+      const overLimit = useTokenizer && tokenCount != null
+        ? tokenCount > Config.EMBED_TOKEN_LIMIT
+        : c.text.length > Config.EMBED_TOKEN_CHAR_CEILING;
+
+      if (!overLimit) { out.push(c); continue; }
+
+      resplitCount++;
+      // Re-split: separate breadcrumb (lines starting with #) from body,
+      // then slice the body into pieces under the char ceiling, re-attaching
+      // the breadcrumb to each piece.
+      const lines = c.text.split('\n');
+      let splitAt = 0;
+      while (splitAt < lines.length && /^#{1,3}\s/.test(lines[splitAt])) splitAt++;
+      while (splitAt < lines.length && lines[splitAt].trim() === '') splitAt++;
+      const breadcrumb = lines.slice(0, splitAt).join('\n').trim();
+      const body = lines.slice(splitAt).join('\n').trim();
+
+      const budget = Math.max(200, Config.EMBED_TOKEN_CHAR_CEILING - breadcrumb.length - 4);
+      const { CHUNK_OVERLAP: O } = Config;
+      let pieceIdx = 0;
+      for (let s = 0; s < body.length; s += (budget - O)) {
+        const slice = body.slice(s, s + budget).trim();
+        if (slice.length < 20) { if (s + budget >= body.length) break; continue; }
+        const pieceText = breadcrumb ? breadcrumb + '\n\n' + slice : slice;
+        out.push({ ...c, id: c.id + '_' + String.fromCharCode(97 + pieceIdx), text: pieceText });
+        pieceIdx++;
+        if (s + budget >= body.length) break;
+      }
+    }
+
+    if (resplitCount > 0) {
+      console.warn(`[Chunker] ${resplitCount} chunk(s) exceeded the ` +
+        `${useTokenizer ? Config.EMBED_TOKEN_LIMIT+'-token' : Config.EMBED_TOKEN_CHAR_CEILING+'-char'} ` +
+        `embedding limit and were re-split. Total chunks: ${chunks.length} → ${out.length}.`);
+    }
+    return out;
+  },
 };
 
 // ── MODULE: Backends ───────────────────────────────────────────────────────────
@@ -859,6 +957,40 @@ const Retrieval = {
     const lower=text.toLowerCase();
     return phrases.filter(p=>p.includes(' ')&&lower.includes(p)).length*Config.EXACT_PHRASE_BONUS;
   },
+  /**
+   * Take items from a score-sorted list, capping how many may come from any
+   * single document. Preserves overall score order — within that order,
+   * skips items from a document once its cap is reached, so other
+   * documents' lower-but-still-relevant chunks get a fair chance.
+   *
+   * @param {Array}  sorted    — score-sorted items, each with .docName
+   * @param {number} limit     — total items to return
+   * @param {number} maxShare  — fraction 0-1, max share from one document
+   */
+  capPerDocument(sorted, limit, maxShare) {
+    const maxPerDoc = Math.max(1, Math.floor(limit * maxShare));
+    const counts = new Map();
+    const result = [];
+    for (const item of sorted) {
+      const n = counts.get(item.docName) || 0;
+      if (n >= maxPerDoc) continue;
+      counts.set(item.docName, n + 1);
+      result.push(item);
+      if (result.length >= limit) break;
+    }
+    // If the cap left slots unfilled (e.g. corpus has very few documents),
+    // backfill from the remaining sorted items regardless of cap.
+    if (result.length < limit) {
+      const used = new Set(result);
+      for (const item of sorted) {
+        if (used.has(item)) continue;
+        result.push(item);
+        if (result.length >= limit) break;
+      }
+    }
+    return result;
+  },
+
   async search(query, expandedTerms=[], onPhase) {
     const baseTerms = this.tokenize(query);
     const allTerms  = expandedTerms.length
@@ -885,20 +1017,20 @@ const Retrieval = {
            + this.exactPhraseBonus(c.text,phrases),
     }));
     cands.sort((a,b)=>b.score-a.score);
-    cands = cands.slice(0,Config.RETRIEVAL_CANDIDATES);
+    cands = this.capPerDocument(cands, Config.RETRIEVAL_CANDIDATES, Config.MAX_CANDIDATE_SHARE_PER_DOC);
 
     const hasReranker = State.backend==='transformers'
       ? (State.tjsRerankModel&&State.tjsRerankTokenizer)
       : (State.backend==='llamacpp'&&!!State.rerankModel);
     if (hasReranker) { if (onPhase) onPhase('rerank'); cands=await Backends.rerank(query,cands); }
-    return cands.slice(0,Config.RETRIEVAL_TOP_K);
+    return this.capPerDocument(cands, Config.RETRIEVAL_TOP_K, Config.MAX_CANDIDATE_SHARE_PER_DOC);
   },
   checkAbsence(terms, alreadyFetched=[]) {
     if (!terms?.length) return [];
     const ids=new Set(alreadyFetched.map(c=>c.id));
     const lower=terms.filter(t=>t.length>=3).map(t=>t.toLowerCase());
-    return State.chunks.filter(c=>!ids.has(c.id)&&lower.some(t=>c.text.toLowerCase().includes(t)))
-      .slice(0,Config.RETRIEVAL_CANDIDATES);
+    const matches = State.chunks.filter(c=>!ids.has(c.id)&&lower.some(t=>c.text.toLowerCase().includes(t)));
+    return this.capPerDocument(matches, Config.RETRIEVAL_CANDIDATES, Config.MAX_CANDIDATE_SHARE_PER_DOC);
   },
 };
 
@@ -1857,13 +1989,29 @@ const Setup = {
 
     // Phase 1: chunk + render
     const allChunks=[];
+    const chunkCounts={};
     for (const file of docFiles) {
       const text=await file.text();
       try { await Cache.saveFile(file.name,text); } catch {}
       UI.renderDocument(file.name,text);
-      const raw=Chunker.chunk(text,file.name);
+      let raw=Chunker.chunk(text,file.name);
+      raw=await Chunker.enforceTokenLimit(raw);
       raw.forEach((c,i)=>{ c.docName=file.name; c.prevId=i>0?raw[i-1].id:null; c.nextId=i<raw.length-1?raw[i+1].id:null; });
+      chunkCounts[file.name]=raw.length;
       allChunks.push(...raw);
+    }
+    // Diagnostic: surface per-document chunk-count imbalance before it
+    // silently skews retrieval (see MAX_CANDIDATE_SHARE_PER_DOC for the fix).
+    console.log('[Ingest] Chunk counts per document:', chunkCounts, '— total:', allChunks.length);
+    const chunkCountVals=Object.values(chunkCounts);
+    if (chunkCountVals.length>1) {
+      const maxCount=Math.max(...chunkCountVals), totalCount=allChunks.length;
+      if (maxCount/totalCount > 0.4) {
+        const biggest=Object.entries(chunkCounts).find(([,n])=>n===maxCount)[0];
+        console.warn('[Ingest] "'+biggest+'" is '+Math.round(maxCount/totalCount*100)+'% of all chunks '+
+          '('+maxCount+'/'+totalCount+'). Large documents can dominate retrieval by sheer volume; '+
+          'MAX_CANDIDATE_SHARE_PER_DOC mitigates this, but splitting large documents into smaller files also helps.');
+      }
     }
     State.chatHistory=[{role:'system',content:this.buildSystemPrompt(docFiles.map(f=>f.name))}];
 
