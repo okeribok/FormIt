@@ -368,7 +368,7 @@ const Config = Object.freeze({
   // 0.5 means: of 12 candidates, at most 6 may come from one document.
   MAX_CANDIDATE_SHARE_PER_DOC: 0.5,
   HISTORY_MAX_TURNS:           8,
-  PASS0_MAX_TOKENS:          160,
+  PASS0_MAX_TOKENS:          190,   // +30 vs prior to cover the language field
   RRF_K:                      60,   // Reciprocal Rank Fusion constant
   CHUNK_EXPAND_MAX:           15,   // max context chunks after neighbour expansion
   EMBED_BATCH_SIZE:           16,   // texts per embedding API request (API backends)
@@ -419,7 +419,10 @@ const Prompts = {
         'Output JSON only:\n'+
         '{"search_terms":["key nouns, codes"],'+
         '"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen",'+
-        '"likely_contains":["concepts a complete answer would cite"]}\n\n'+
+        '"likely_contains":["concepts a complete answer would cite"],'+
+        '"language":"<the natural language of the Question below, written out in English, '+
+        'e.g. Dutch, English, German, French, Spanish, Czech, Arabic, Polish>"}\n\n'+
+        'Detect "language" from the Question text itself, not from this system prompt. '+
         'EXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint,
       user: ctx+'Question: '+text+'\n\nDecompose (JSON only):',
     };
@@ -1220,13 +1223,6 @@ const UI = {
 };
 
 // ── NLP helpers ───────────────────────────────────────────────────────────────
-function detectLanguage(text) {
-  const nlWords=new Set(['de','het','een','is','van','in','dat','zijn','op','aan','als','er','maar',
-    'wat','niet','voor','met','ook','dan','ik','je','ze','we','dit','die','door','heeft','wordt']);
-  const tokens=text.toLowerCase().split(/\s+/);
-  const ratio=tokens.filter(w=>nlWords.has(w.replace(/[^a-z]/g,''))).length/Math.max(tokens.length,1);
-  return ratio>0.12 ? 'Dutch' : 'English';
-}
 
 function extractJSON(raw) {
   let text=raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
@@ -1287,7 +1283,7 @@ const Pipeline = {
     }).join('\n\n');
   },
 
-  async queryExpand(text, lang) {
+  async queryExpand(text) {
     const prevUser=State.chatHistory.filter(m=>m.role==='user').slice(-1)[0]?.content??'';
     const ctx=prevUser&&prevUser!==text ? 'Previous question: '+prevUser+'\n' : '';
     const thesHint=State.thesaurus
@@ -1310,10 +1306,11 @@ const Pipeline = {
         search_terms:Array.isArray(parsed.search_terms)?parsed.search_terms:[],
         answer_shape:shape,
         likely_contains:Array.isArray(parsed.likely_contains)?parsed.likely_contains:[],
+        language: typeof parsed.language==='string'&&parsed.language.trim() ? parsed.language.trim() : 'English',
       };
     } catch(e) {
       console.warn('[Pass 0] Degrading:',e);
-      return {search_terms:[],answer_shape:'algemeen',likely_contains:[]};
+      return {search_terms:[],answer_shape:'algemeen',likely_contains:[],language:'English'};
     }
   },
 
@@ -1329,7 +1326,7 @@ const Pipeline = {
     const history = document.getElementById('chat-history');
     let rerankTimer = null;
 
-    const p0 = await this.phase(status, '🔍 Vraag analyseren (pass 0)...', () => this.queryExpand(text, detectLanguage(text)));
+    const p0 = await this.phase(status, '🔍 Vraag analyseren (pass 0)...', () => this.queryExpand(text));
     const allExpandedTerms = Thesaurus.expandTerms([...p0.search_terms, ...p0.likely_contains]);
 
     const onRetrievalPhase = phase => {
@@ -1397,14 +1394,16 @@ const Pipeline = {
 
   async run(text) {
     const history=document.getElementById('chat-history');
-    const lang=detectLanguage(text);
-    const langInstr='Respond in '+lang+'. Match the language of the user question exactly.';
     const status=UI.showStatus('🔍 Vraag analyseren (pass 0)...');
 
     try {
       // ── Pass 0 + Retrieval ────────────────────────────────────────────────
       const { p0, allExpandedTerms, chunks: retrievedChunks } = await this.retrieve(text, status);
       let chunks = retrievedChunks;
+
+      // Language is detected by the LLM itself in Pass 0 (p0.language) — no heuristic.
+      const lang=p0.language;
+      const langInstr='Respond in '+lang+'. Match the language of the user question exactly.';
 
       // ── Pass 1: JSON decision ────────────────────────────────────────────
       const { parsed: p1parsed, raw: p1raw } = await this.decide(text, chunks, status);
@@ -1656,7 +1655,7 @@ const Doc = {
     if (!retrieval) throw new Error('Geen retrieval: prompt opgegeven.');
     const sysPrompt=Setup.buildSystemPrompt([...new Set(State.chunks.map(c=>c.docName))]);
 
-    const p0=await Pipeline.queryExpand(retrieval,detectLanguage(retrieval));
+    const p0=await Pipeline.queryExpand(retrieval);
     const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
     const chunks=await Retrieval.search(retrieval,expanded,null);
     const context=Pipeline.buildContext(chunks);
@@ -1703,7 +1702,7 @@ const Doc = {
       if (State.docStopRequested) break;
       let context='';
       if (row.doRag&&State.chunks.length>0) {
-        const p0=await Pipeline.queryExpand(row.title+' '+row.description,'Dutch');
+        const p0=await Pipeline.queryExpand(row.title+' '+row.description);
         const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
         const chunks=await Retrieval.search(row.description,expanded,null);
         context=Pipeline.buildContext(chunks)+'\n\n';
@@ -2226,6 +2225,7 @@ document.getElementById('clear-docs-btn').addEventListener('click', async () => 
 document.getElementById('template-upload').addEventListener('change', async e => {
   const file=e.target.files[0]; if (!file) return;
   const text=await file.text();
+  Doc.resetResults();
   document.getElementById('doc-source').value=text;
   Doc.save(text); Doc.render(text);
   document.getElementById('doc-status').textContent='✓ Template geladen: '+file.name;
@@ -2254,7 +2254,8 @@ document.getElementById('doc-stop').addEventListener('click', () => {
 });
 document.getElementById('doc-download').addEventListener('click', () => {
   const source=document.getElementById('doc-source').value;
-  const blob=new Blob([source],{type:'text/markdown'});
+  const out=Doc.serialize(source);
+  const blob=new Blob([out],{type:'text/markdown'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download='document.md'; a.click();
   URL.revokeObjectURL(url);
