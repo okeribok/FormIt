@@ -418,10 +418,11 @@ const Prompts = {
         'You decompose questions into retrieval targets. DO NOT answer or judge permissibility.\n\n'+
         'Output JSON only:\n'+
         '{"search_terms":["key nouns, codes"],'+
-        '"answer_shape":"regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen",'+
+        '"answer_shape":"<EXACTLY ONE WORD: regelgeving OR procedure OR definitie OR bedrag OR termijn OR vergelijking OR algemeen>",'+
         '"likely_contains":["concepts a complete answer would cite"],'+
         '"language":"<the natural language of the Question below, written out in English, '+
         'e.g. Dutch, English, German, French, Spanish, Czech, Arabic, Polish>"}\n\n'+
+        'answer_shape MUST be exactly one word from the list above — no combinations, no pipes, no invented values.\n'+
         'Detect "language" from the Question text itself, not from this system prompt. '+
         'EXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint,
       user: ctx+'Question: '+text+'\n\nDecompose (JSON only):',
@@ -1278,7 +1279,8 @@ const Pipeline = {
         return (parseInt(a.id.split('_').at(-1))||0)-(parseInt(b.id.split('_').at(-1))||0);
       }).slice(0,Config.CHUNK_EXPAND_MAX);
     return 'CONTEXT:\n'+ordered.map(c=>{
-      const score=scores.has(c.id)?', Relevance: '+scores.get(c.id).toFixed(2):'';
+      const s=scores.get(c.id);
+      const score=typeof s==='number'?', Relevance: '+s.toFixed(2):'';
       return '[Doc: '+c.docName+', ChunkId: '+c.id+score+']\n'+c.text;
     }).join('\n\n');
   },
@@ -1401,6 +1403,13 @@ const Pipeline = {
       const { p0, allExpandedTerms, chunks: retrievedChunks } = await this.retrieve(text, status);
       let chunks = retrievedChunks;
 
+      // Hard stop: if retrieval found nothing, say so — do not send empty context to the LLM.
+      if (!chunks.length) {
+        status.remove();
+        UI.addMessage('bot','❌ Geen relevante chunks gevonden voor deze vraag.\n\nI don\'t know — the loaded documents contain no information that matches your question.');
+        return;
+      }
+
       // Language is detected by the LLM itself in Pass 0 (p0.language) — no heuristic.
       const lang=p0.language;
       const langInstr='Respond in '+lang+'. Match the language of the user question exactly.';
@@ -1416,6 +1425,14 @@ const Pipeline = {
 
       // ── Absence check ─────────────────────────────────────────────────────
       ({ parsed, chunks } = await this.absenceCheck(text, parsed, chunks, allExpandedTerms));
+
+      // If Pass 1 + absence retry found no citations, the corpus has no answer.
+      // Stop here — do not let Pass 2 fill the gap with model knowledge.
+      if (!parsed.citations?.length) {
+        status.remove();
+        UI.addMessage('bot','❌ De geladen documenten bevatten geen informatie over dit onderwerp.\n\nI don\'t know — nothing in the loaded documents is relevant to this question.');
+        return;
+      }
 
       if (parsed.state_update) UI.updateState(parsed.state_update);
       if (parsed.citations?.length) {
@@ -1475,7 +1492,7 @@ const Pipeline = {
         ):p3text;
         if (State.thesaurus) Thesaurus.wikify(p3body);
         p3el.append(p3body);
-        p3el.querySelectorAll('blockquote p, blockquote').forEach(el=>{
+        p3el.querySelectorAll('blockquote').forEach(el=>{
           const q=el.textContent.trim().replace(/^>\s*/,'');
           if (q.length>5) {
             el.style.cursor='pointer'; el.title='Klik om te stellen';
@@ -1658,6 +1675,7 @@ const Doc = {
     const p0=await Pipeline.queryExpand(retrieval);
     const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
     const chunks=await Retrieval.search(retrieval,expanded,null);
+    if (!chunks.length) throw new Error('❌ Geen relevante chunks gevonden — I don\'t know.');
     const context=Pipeline.buildContext(chunks);
 
     const p1msgs=[{role:'system',content:sysPrompt},{role:'user',content:Prompts.pass1User(context, retrieval)}];
@@ -2226,8 +2244,10 @@ document.getElementById('template-upload').addEventListener('change', async e =>
   const file=e.target.files[0]; if (!file) return;
   const text=await file.text();
   Doc.resetResults();
-  document.getElementById('doc-source').value=text;
-  Doc.save(text); Doc.render(text);
+  const ta = document.getElementById('doc-source');
+  ta.value = text;
+  Doc.save(text);
+  ta.dispatchEvent(new Event('input'));  // triggers the existing input listener → render
   document.getElementById('doc-status').textContent='✓ Template geladen: '+file.name;
 });
 
