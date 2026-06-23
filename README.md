@@ -145,14 +145,22 @@ Workload: 11 markdown files.
 **WebGPU version:**
 * Chunking: 33 s.
 * "toneelstuk" prompt: 33 s.
+
 **LMstudio version (no reranking):**
 * Chunking: 25 s.
 * "toneelstuk" prompt: 11 s.
+
+Hardware: Strix Halo, 64G ram
+Workload: 11 markdown files.
+**WebGPU version:**
+* chunking: 1:45 (105s)
+* "toneelstuk" prompt: 50s
 
 Hardware: Z1 Extreme, 16G ram
 **WebGPU version:**
 * Chunking: 3:45 (225s).
 * "toneelstuk" prompt: 3:15 (205s).
+
 **LMstudio version (no reranking):**
 * Chunking: 1:08 (68s).
 * "toneelstuk" prompt: 1:03 (63s).
