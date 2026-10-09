@@ -14,10 +14,23 @@ Open met: "Aan het eind kan iedereen de hele keten navertellen en goed van matig
 
 ---
 
-## Even peilen: handen omhoog
+## voorstellen
+
+---
+
+## Even peilen: handen omhoog 👋
 
 - Wie gebruikt AI **thuis**?
+
+---
+
+## Even peilen: handen omhoog 👋
+
 - Wie gebruikt **Vlam-chat** op het werk?
+
+---
+## Even peilen: handen omhoog 👋
+
 - Bij wie rinkelt er een belletje bij **"RAG"**?
 
 <!--
@@ -37,14 +50,25 @@ Nee: ik leg het simpel uit. Ook nuttig voor wie het kent: hergebruik de voorbeel
 
 ---
 
+## demo tijd! (verkorte versie)
+* filmpje  https://youtu.be/AXkbS8AO9nc 
+* echte app https://okeribok.github.io/FormIt/
+
+---
+
 ## Afspraken
 
 - Vragen in de **chat**
-- Vergeet ik een term uit te leggen? Zeg het hardop
 - **Wie is mijn jargon-bewaker?**
+  - Vergeet ik een term uit te leggen? Zeg het hardop
 - Veel Engelse termen: je hoeft ze niet te kennen, alleen te weten dat ze zo heten
 
 <!-- Jargon-bewaker: handje + chat. Geef die persoon een rol: "roep 'jargon!'" -->
+
+---
+## Even peilen: handen omhoog 👋
+
+Ooit een AI-antwoord gezien dat zelfverzekerd klonk maar fout was? Ooit gedacht "waar komt dit vandaan?"
 
 ---
 
@@ -58,7 +82,7 @@ mindmap
     Focus
       wijdt uit over alles
     Uitlegbaarheid
-      waar komt dit vandaan?
+      hoe kom je hieraan?
     Actualiteit
       Euromast verplaatst?
 ```
@@ -235,17 +259,29 @@ timeline
 
 ---
 
+## datasets en hoeveel is "veel"?
+* pretraining: https://huggingface.co/datasets/HuggingFaceFW/fineweb 
+    * (52,453,695,892 rijen: 52B, 15T tokens)
+* instruct training: https://huggingface.co/datasets/HuggingFaceTB/OpenHermes-2.5-H4 
+    * (1,001,551: rijen 1M, 500M tokens)
+* mijn dataset uit 2024 Leesplank B1 vereenvoudigingen: https://huggingface.co/datasets/UWV/Leesplank_NL_wikipedia_simplifications_preprocessed 
+    * (2,694,555 rijen: 2.7M, 600M tokens; Heel Nederlandse wikipedia + vereenvoudiging)
+* trainingsdata voor het model dat we zodadelijk gebruiken (granite 4.0 micro): 15T tokens
+* Hoe groter het model, hoe meer trainingsdata het nodig heeft.
+---
+
+
+
 ## Kennis van buiten het model: het boek
 
 Hele boeken meegeven kan, maar:
 
 - Kost **tijd en energie**
 - Te veel context = **ruis**; het model werkt met statistiek
-- Wat je niet nodig hebt, **stoort**
+- Wat je niet nodig hebt, **verstoort**
 
 **Dus: geef alleen het stuk dat nodig is.** Maar welk stuk?
 
-<!-- Handje op: "hoe meer tekst ik meegeef, hoe beter het antwoord altijd wordt." -->
 
 ---
 
@@ -278,7 +314,7 @@ Een boek knippen in stukjes waar net **genoeg** in staat om een antwoord op te b
 
 - Hoofdstukken helpen al, maar daarin gebeurt nog veel
 - Te groot: ruis. Te klein: context mist
-- Een vakgebied op zich
+- Chunking is een zelfstandig vakgebied
 
 <!-- Handje op: "het maakt niet uit hoe groot of klein de stukjes zijn." -->
 
@@ -307,9 +343,9 @@ Niet alleen "goed opgemaakt", maar:
 - **Eenduidig**
 - **Niet tegenstrijdig**
 - **Niet verouderd**
-- **Machine-vriendelijke structuur** (kopjes, subkopjes)
+- **Machine-_vriendelijke_ structuur** (kopjes, subkopjes)
 
-*Rommel erin = rommel eruit.*
+*Rommel erin = grote meurende beerputbrand eruit.*
 
 <!-- Brug naar later: jullie kunnen zelf een toepassing bouwen, en begint bij je documenten. -->
 
@@ -323,7 +359,7 @@ Kies "goed": wie wijst dezelfde kant op?
 
 ```mermaid
 quadrantChart
-    title Embedding space (2D, in het echt duizenden dimensies)
+    title Embedding space (in 2D)
     x-axis Negatief --> Positief
     y-axis Eten --> Waardering
     quadrant-1 Waardering+
@@ -340,6 +376,12 @@ quadrantChart
 <!--
 "Prima" en "uitstekend" liggen dicht bij "goed", "kip" en "schoenmaat" niet. In 2D te ruw, maar met honderden/duizenden dimensies werkt het.
 -->
+
+---
+
+## embedding in het echt
+* Granite heeft 2560 dimensies
+* Wederom: een vakgebied op zich
 
 ---
 
@@ -408,7 +450,6 @@ De vraag staat **er niet letterlijk in**. En "bankje"? Park, woonkamer of bank?
 
 # Pauze ☕ 10 minuten
 
-
 ---
 
 ## Zijstapje: tools
@@ -420,7 +461,7 @@ Sommige kennis kan **niet uit een document** komen:
 
 De AI gebruikt een **gewoon programma** en verwerkt de uitkomst.
 
-*Dit heet tool-use. Vandaag verder niet.*
+*Dit heet tool-use. Een verhaal voor een andere keer.*
 
 ---
 
@@ -453,7 +494,20 @@ flowchart LR
 
 > vraag → herschrijven + synoniemen → hybride zoeken (betekenis + exact) → reranken → de beste stukken → lang 'denk'-antwoord → kort antwoord + klikbare bronnen → doorvragen of een heel document genereren
 
-<!-- Laat de zaal dit hardop navertellen. Dat is het doel van deel 3. -->
+---
+
+## demo tijd! (langere versie)
+* filmpje  https://youtu.be/AXkbS8AO9nc 
+* echte app https://okeribok.github.io/FormIt/
+* vraag 
+    * _"ik wil een toneelstuk schrijven over de geschiedenis van pasta. het moet historisch accuraat zijn. welke personages, gebeurtenissen en locaties zijn geschikt voor een dramatische vertelling?"_ in 12 talen
+* daarna: "leg uit hoe de large hadron collider werkt" (zou moeten zeggen: "ik weet het niet")
+
+---
+
+## het bewijs van geavanceerde RAG: ik weet het niet
+* Formit kan "ik weet het niet" zeggen, maar probeert het toch nog vaak.
+* Het is best moeilijk om dit voor elkaar te krijgen, laat staan betrouwbaar.
 
 ---
 
@@ -477,6 +531,8 @@ flowchart LR
 
 <!-- Interactie: vraag de zaal. Eigen invulling per actuele stand van Vlam-chat; check vooraf wat het nu kan (zoeken, bronnen). -->
 
+---
+
 # Deel 4
 ## Van chat naar toepassing
 
@@ -484,16 +540,16 @@ flowchart LR
 
 ## Een chat is veel werk
 
-- Altijd beginnen met een **knipperende cursor**
+- Begint met een **knipperende cursor in een leeg tekstvak** 
 - Steeds stap voor stap vragen stellen
 
 Een **toepassing** legt het hele gesprek vast: herhaalbaar, stapsgewijs verbeterbaar.
 
-*Vergelijk: één formule per keer vs. een complete spreadsheet met opmaak.*
+*Vergelijk: één formule per keer met een in- en uitvoerveld vs. een complete spreadsheet met opmaak.*
 
 ---
 
-## Document genereren: de recept-structuur
+## Applicatie: Document genereren: de recept-structuur
 
 ```mermaid
 flowchart TD
@@ -503,12 +559,17 @@ flowchart TD
     D --> D1["Zoekvraag<br/>(retrieval)"]
     D --> D2["Schrijfvraag<br/>(rewrite)"]
     D --> D3["Beoordeling<br/>(eval / toetsmatrijs)"]
+    E["AI provenance log"]
+    D1 --> E
+    D2 --> E
+    D3 --> E
 ```
 
 <!--
 Corpus: kopjes en subkopjes, tekst alleen op het laagste niveau. Webpagina naar Markdown: r.jina.ai.
 Eval: puntensysteem op compleetheid, stijl, etc. - eventueel met opnieuw zoeken.
 Je kunt dit met collega's en stakeholders vooraf afspreken: welke informatie, stijl, kopjes en evaluatie ertoe doen. Dat levert al waarde op, nog zonder één watt AI.
+Tot slot wordt per keer geregistreerd hoeveel tokens geconsumeerd en gegenereerd worden. Hier kun je een totaal aan energiebelasting mee berekenen bijvoorbeeld.
 -->
 
 ---
@@ -520,7 +581,7 @@ Je kunt dit met collega's en stakeholders vooraf afspreken: welke informatie, st
 - Besluitnotitie?
 - ...?
 
-**Handje op als je nu al een idee hebt.**
+**Handje op 👋 als je nu al een idee hebt.**
 
 <!-- Laat 2-3 mensen vertellen. Inspiratie: wat zou nog meer kunnen met dit principe? -->
 
@@ -532,7 +593,7 @@ Je kunt dit met collega's en stakeholders vooraf afspreken: welke informatie, st
 |---|---|---|---|
 | Grootte | **3B** | 128B | ~1400B+ |
 | Nederlands | matig | goed | goed |
-| Talen | 12 | | |
+| Talen | 12 | 40 | 95 |
 
 - Gekke fouten vallen **goed op**, dus je checkt zelf
 - Laptop-upgrade naar 8B: meer geheugen, trager, **veel beter**
@@ -564,12 +625,13 @@ Eerlijkheid: een klein model is nog steeds te injecteren. De winst zit in de arc
 Platform = hergebruik van barrières en één Definition of Done voor alle sjablonen. Let op concentratie: zwaar gevolg vraagt nog steeds onafhankelijkheid (common cause).
 Voor managers: vraag niet "welk probleem lost dit op?" maar "welke klasse problemen, en wat gebeurt er met de workarounds als we dit níet bieden?"
 -->
+---
 
 ## FormIt: veiligheid, kosten, milieu
 
 - **Vliegtuigstand**: alle gegevens blijven op je laptop, ook voor hoog-beveiligd
 - **Soeverein**: onafhankelijk van leveranciers, versies, updates
-- **Klein en ingebed**: ±2000 regels code in een sandbox
+- **Klein en ingebed**: ±2000 regels code in de browser sandbox
 - **Milieu**: geen datacenter, en het kleinste model dat volstaat ≈ **500× minder** energie
 
 <!-- Of het in 30 seconden of 6 minuten klaar is: maakt dat echt uit? En dan zijn er mensen die GPT gebruiken om woorden te tellen. -->
@@ -587,13 +649,3 @@ Voor managers: vraag niet "welk probleem lost dit op?" maar "welke klasse proble
 
 
 ---
-
-## Hoe werkt AI bij RVB?
-
-### Stap 1: neem je BIA mee
-
-Het begint altijd met een **behoeftestelling**.
-
-📧 postbus.rvb.bedrijfsinformatieadvies@rijksoverheid.nl
-
-**Vragen?**
