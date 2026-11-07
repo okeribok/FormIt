@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fietsbel CE — Cooperative, Provenance-first RAG 260616</title>
+  <title>AIbaarAI RAG en document generator v2.1</title>
   <!--
     Required files (next to index.html): marked.min.js
     Optional: transformers.min.js, mermaid.min.js
@@ -150,7 +150,7 @@
 
 <dialog id="setup-dialog">
   <div class="dialog-box panel" id="panel-restore" hidden>
-    <h2>Fietsbel CE — Sessie herstellen</h2>
+    <h2>AIbaarAI — Sessie herstellen</h2>
     <p class="sub">Gecachede documenten gevonden. Herstellen of nieuwe sessie starten?</p>
     <div id="restore-info"></div>
     <button id="btn-restore">↺ Herstellen — vectoren reeds berekend</button>
@@ -158,7 +158,7 @@
   </div>
 
   <div class="dialog-box panel" id="panel-choice" hidden>
-    <h2>Fietsbel CE — Kies backend</h2>
+    <h2>AIbaarAI — Kies backend</h2>
     <p class="sub">Selecteer de inferentiebackend voor deze sessie.</p>
     <button id="btn-choice-lms"   style="margin-bottom:.4rem">🖥 LM Studio — lokaal, zonder reranking</button>
     <button id="btn-choice-llama" style="margin-bottom:.4rem">⚙️ llama.cpp — lokaal, met reranking + streaming</button>
@@ -166,7 +166,7 @@
   </div>
 
   <div class="dialog-box panel" id="panel-lmstudio" hidden>
-    <h2>Fietsbel CE — LM Studio</h2>
+    <h2>AIbaarAI — LM Studio</h2>
     <p class="sub">Zorg dat LM Studio draait met CORS ingeschakeld.</p>
     <div class="field"><label>API Endpoint</label>
       <input type="text" id="lms-url" value="http://127.0.0.1:1234"></div>
@@ -186,7 +186,7 @@
   </div>
 
   <div class="dialog-box panel" id="panel-llamacpp" hidden>
-    <h2>Fietsbel CE — llama.cpp</h2>
+    <h2>AIbaarAI — llama.cpp</h2>
     <p class="sub">Elke service kan op een eigen poort draaien. Vul de URL in per functie.</p>
     <div class="url-grid">
       <div class="field"><label>Chat / LLM URL</label>
@@ -213,7 +213,7 @@
   </div>
 
   <div class="dialog-box panel" id="panel-transformers" hidden>
-    <h2>Fietsbel CE — Browser AI</h2>
+    <h2>AIbaarAI — Browser AI</h2>
     <p class="sub">Modellen worden van HuggingFace CDN gedownload en gecached.</p>
     <button id="btn-tjs-load">⬇ Download &amp; Laad Modellen</button>
     <div id="tjs-progress" hidden style="margin-top:1rem">
@@ -269,7 +269,7 @@
 }</output>
       </section>
       <section id="chat-section">
-        <header class="pane-hdr" id="chat-label">Fietsbel CE — Multidisciplinair Overleg</header>
+        <header class="pane-hdr" id="chat-label">AIbaarAI — Multidisciplinair Overleg</header>
         <div id="chat-history" role="log" aria-live="polite"></div>
         <form id="input-form" autocomplete="off">
           <textarea id="chat-input" rows="2" placeholder="Stel een vraag over de documenten..."></textarea>
@@ -315,218 +315,727 @@
 </div>
 
 
+<!-- ═══════════════════════════════════════════════════════════════════════════
+  FLOWS — every LLM pass, retrieval step and prompt of the app, one block per flow.
+  Syntax: PDL-style (steps pass results to later steps via `def:` → ${var}),
+  written in TOON (indentation, `key: value`, `key[N]: a,b`, `key[N]{f1,f2}:` rows).
+  One extension: `key: |` starts an indented plain-text block (for prompts).
+  Step kinds: set · expand · retrieve · context · llm · scan_retry · require
+  `use: flow.id` copies a step from another flow; keys beside it override.
+  Edit here; nothing else in the code holds prompt text or pass parameters.
+════════════════════════════════════════════════════════════════════════════ -->
+<script type="text/plain" id="flow-chat">
+flow: chat
+note: RAG chat — pass 0 decompose → hybrid retrieval + rerank → pass 1 decision → absence scan → pass 2 answer → pass 3 summary + follow-ups
+models[3]{role,used_by}:
+  chat,"p0 p1 scan p2 p3"
+  embed,retrieve
+  rerank,retrieve
+inputs[4]: question,prev_question,thes_terms,example_doc
+steps[19]:
+  - id: prev_ctx
+    kind: set
+    from: prev_question
+    wrap: "Previous question: %s\n"
+    def: prev_ctx
+  - id: thes_hint
+    kind: set
+    from: thes_terms
+    wrap: "\nAvailable vocabulary: %s"
+    def: thes_hint
+  - id: p0
+    kind: llm
+    role: chat
+    label: 🔍 Vraag analyseren (pass 0)...
+    mode: complete
+    max_tokens: 190
+    temperature: 0
+    parse: json
+    on_error: fallback
+    expect[4]{field,type,allowed,fallback}:
+      search_terms,list,,
+      answer_shape,enum,regelgeving|procedure|definitie|bedrag|termijn|vergelijking|algemeen,algemeen
+      likely_contains,list,,
+      language,text,,
+    def: p0
+    system: |
+      You decompose questions into retrieval targets. DO NOT answer or judge permissibility.
+
+      Output JSON only:
+      {"search_terms":["key nouns, codes"],"answer_shape":"<EXACTLY ONE WORD: regelgeving OR procedure OR definitie OR bedrag OR termijn OR vergelijking OR algemeen>","likely_contains":["concepts a complete answer would cite"],"language":"<the natural language of the Question below, written out in English, e.g. Dutch, English, German, French, Spanish, Czech, Arabic, Polish>"}
+
+      answer_shape MUST be exactly one word from the list above — no combinations, no pipes, no invented values.
+      Detect "language" from the Question text itself, not from this system prompt. EXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.${thes_hint}
+    user: |
+      ${prev_ctx}Question: ${question}
+
+      Decompose (JSON only):
+  - id: terms
+    kind: expand
+    from[2]: p0.search_terms,p0.likely_contains
+    def: terms
+  - id: lang_name
+    kind: set
+    from: p0.language
+    default: the same language as the Question
+    def: lang_name
+  - id: idk
+    kind: pick
+    from: p0.language
+    def: idk
+    table[13]{lang,text}:
+      default,"I don't know — the loaded documents contain no information that answers this question."
+      English,"I don't know — the loaded documents contain no information that answers this question."
+      Dutch,"Ik weet het niet — de geladen documenten bevatten geen informatie die deze vraag beantwoordt."
+      German,"Ich weiß es nicht — die geladenen Dokumente enthalten keine Informationen, die diese Frage beantworten."
+      French,"Je ne sais pas — les documents chargés ne contiennent aucune information qui répond à cette question."
+      Spanish,"No lo sé — los documentos cargados no contienen información que responda a esta pregunta."
+      Italian,"Non lo so — i documenti caricati non contengono informazioni che rispondano a questa domanda."
+      Portuguese,"Não sei — os documentos carregados não contêm informações que respondam a esta pergunta."
+      Czech,"Nevím — načtené dokumenty neobsahují informace, které by tuto otázku zodpovídaly."
+      Arabic,"لا أعرف — المستندات المحمّلة لا تحتوي على معلومات تجيب عن هذا السؤال."
+      Japanese,"わかりません — 読み込まれた文書には、この質問に答える情報が含まれていません。"
+      Korean,"모르겠습니다 — 불러온 문서에는 이 질문에 답하는 정보가 없습니다."
+      Chinese,"我不知道 — 已加载的文档中没有能回答这个问题的信息。"
+  - id: retrieve
+    kind: retrieve
+    role: embed,rerank
+    query: ${question}
+    docs: docs
+    terms: terms
+    def: chunks
+    reuse: prior
+    candidates: 12
+    top_k: 5
+    rrf_k: 60
+    max_share_per_doc: 0.5
+    exact_phrase_bonus: 0.015
+    rerank: auto
+    min_cosine: 0.64
+    on_empty: stop
+    reply: "❌ ${idk}"
+  - id: lang_instr
+    kind: set
+    value: Write your whole answer in ${lang_name}, even if the context blocks are in another language. Never answer in English unless the Question is in English.
+    def: lang_instr
+  - id: ctx
+    kind: context
+    from: chunks
+    neighbours: auto
+    max: 15
+    def: context
+  - id: p1
+    kind: llm
+    role: chat
+    label: 🧠 Beslissing nemen (pass 1)...
+    mode: complete
+    max_tokens: 400
+    temperature: 0
+    parse: extract
+    retry: 1
+    valid: parsed
+    on_fail: stop
+    reply: |
+      ⚠️ Pass 1: no valid JSON after retry.
+
+      ${p1_raw}
+    history: chat
+    history_turns: 8
+    def: p1
+    system: |
+      You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.
+
+      Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]
+
+      Output valid JSON only. No markdown. Start with { end with }.
+      {"decision":"<phrase>","state_update":{"intent":"<intent>","user_facts":[],"facts_gathered":[]},"citations":[{"document":"${example_doc}","chunkId":"${example_doc}_3"}]}
+
+      Rules: no reply field. user_facts from question. facts_gathered from context. Copy chunkId exactly. IMPORTANT: citations should list EVERY context chunk that contributed to your decision or facts_gathered — not just the single most relevant one. If 3 chunks were useful, cite all 3.
+    user: |
+      ${context}
+      Question: ${question}
+  - id: scan
+    kind: scan_retry
+    of: p1
+    terms: terms
+    retrieve_step: retrieve
+    context_step: ctx
+    no_evidence: niet gevonden|not found|geen informatie|insufficient|onbekend
+    suffix: "\n\n[${extra_count} extra chunks via full-corpus scan]"
+  - id: judge
+    kind: llm
+    role: chat
+    label: ⚖️ Relevantie controleren...
+    mode: complete
+    max_tokens: 20
+    temperature: 0
+    parse: json
+    on_error: fallback
+    expect[1]{field,type,allowed,fallback}:
+      answerable,enum,yes|no,yes
+    def: judge
+    system: |
+      You check whether context blocks answer a question. Output JSON only: {"answerable":"yes"} or {"answerable":"no"}.
+
+      Answer "yes" ONLY if the context blocks contain specific information that directly answers the question.
+      Answer "no" if the context is only loosely related, shares a few words, or covers a different subject.
+      Judge by meaning, not by wording. The question may be in any language. Do not use your own knowledge.
+    user: |
+      ${context}
+
+      Question: ${question}
+
+      JSON:
+  - id: answerable_ok
+    kind: set
+    from: judge.answerable
+    unless: no
+    def: answerable_ok
+  - id: need_answerable
+    kind: require
+    var: answerable_ok
+    reply: "❌ ${idk}"
+  - id: need_citations
+    kind: require
+    var: p1.citations
+    reply: "❌ ${idk}"
+  - id: shape_hint
+    kind: set
+    from: p0.answer_shape
+    unless: algemeen
+    wrap: " Expected: %s."
+    def: shape_hint
+  - id: decision_line
+    kind: set
+    from: p1.decision
+    wrap: "Decision: %s\n\n"
+    def: decision_line
+  - id: p2
+    kind: llm
+    role: chat
+    label: ✍️ Antwoord opstellen (pass 2)...
+    mode: stream
+    def: answer
+    system: You are a practical assistant. Answer ONLY from the context blocks. If they do not contain the answer, say so in one sentence and stop. ${lang_instr}${shape_hint} Use markdown. Be concise.
+    user: |
+      ${decision_line}${context}
+
+      Question: ${question}
+
+      Write a practical markdown answer. ${lang_instr}
+  - id: p3
+    kind: llm
+    role: chat
+    label: 💬 Samenvatting & vervolgvragen (pass 3)...
+    mode: complete
+    max_tokens: 300
+    temperature: 0.3
+    on_error: continue
+    def: p3
+    system: You compress text and generate follow-up questions on request. ${lang_instr}
+    user: |
+      Original question: ${question}
+
+      Context: ${intent_ctx}. Known facts: ${acc_facts}. Answer type: ${p0.answer_shape}.
+
+      TEXT TO COMPRESS:
+      ${answer}
+
+      ---
+      Now do exactly this, based ONLY on the TEXT TO COMPRESS above:
+
+      [SHORT ANSWER]
+      Summarize the TEXT TO COMPRESS in 2-3 sentences. ${lang_instr} No bullet points, no headers.
+
+      [FOLLOW-UP]
+      Write exactly 2 short follow-up questions (one per line, each starting with ">"), in ${lang_name}, that build on the specific content of the TEXT TO COMPRESS above.
+</script>
+
+<script type="text/plain" id="flow-doc_prompt">
+flow: doc_prompt
+note: Document builder, one ```prompt block — passes 0-1 and retrieval shared with chat, then research + rewrite. $1 $2 $name $prev from earlier blocks are already substituted into question and rewrite_given.
+models[3]{role,used_by}:
+  chat,"p0 p1 research rewrite"
+  embed,retrieve
+  rerank,retrieve
+consts:
+  default_rewrite: Write a clear, professional document section based on the research findings.
+inputs[6]: question,docs,rewrite_given,do_rewrite,thes_terms,example_doc
+steps[11]:
+  - use: chat.thes_hint
+  - use: chat.p0
+  - use: chat.terms
+  - use: chat.retrieve
+    reuse: never
+    min_cosine: 0
+    reply: "❌ Geen relevante chunks gevonden — I don't know."
+  - use: chat.ctx
+  - use: chat.p1
+    history: none
+    valid: decision
+    on_fail: continue
+  - use: chat.decision_line
+  - id: research
+    kind: llm
+    role: chat
+    label: 📚 Bevindingen samenstellen...
+    mode: stream
+    def: findings
+    system: You are a thorough research assistant. Compile all relevant information from the context. Be comprehensive and factual.
+    user: |
+      ${decision_line}${context}
+
+      Research question: ${question}
+
+      Compile findings:
+  - id: rewrite_instr
+    kind: set
+    value: ${rewrite_given}
+    default: ${default_rewrite}
+    def: rewrite_instr
+    when: do_rewrite
+  - id: rewrite
+    kind: llm
+    role: chat
+    label: ✍️ Document schrijven...
+    mode: stream
+    when: do_rewrite
+    def: output
+    system: You are a professional document writer. Transform research findings into polished document prose. Output only the document text, no meta-commentary.
+    user: |
+      Writing instruction: ${rewrite_instr}
+
+      Research findings:
+      ${findings}
+
+      Write the document section:
+  - id: output
+    kind: set
+    from: findings
+    def: output
+    when: !do_rewrite
+</script>
+
+<script type="text/plain" id="flow-doc_eval">
+flow: doc_eval
+note: Document builder, one rubric row of an ```evaluation block — optional do-rag lookup first, then one scoring call. Runs once per row.
+models[3]{role,used_by}:
+  chat,"p0 score"
+  embed,retrieve
+  rerank,retrieve
+inputs[9]: rag,row_title,row_description,row_onestar,row_twostar,row_threestar,scope_text,thes_terms,example_doc
+steps[8]:
+  - id: question
+    kind: set
+    value: ${row_title} ${row_description}
+    def: question
+    when: rag
+  - use: chat.thes_hint
+    when: rag
+  - use: chat.p0
+    when: rag
+  - use: chat.terms
+    when: rag
+  - use: chat.retrieve
+    query: ${row_description}
+    reuse: never
+    min_cosine: 0
+    on_empty: continue
+    when: rag
+  - use: chat.ctx
+    when: rag
+  - id: ref_context
+    kind: set
+    from: context
+    wrap: "REFERENCE CONTEXT:\n%s\n\n"
+    def: ref_context
+  - id: score
+    kind: llm
+    role: chat
+    mode: complete
+    max_tokens: 120
+    temperature: 0.1
+    def: verdict
+    system: You are a strict document quality evaluator. Output ONLY the requested format.
+    user: |
+      Evaluate the following text on the rubric criterion below.
+
+      ${ref_context}TEXT TO EVALUATE:
+      ${scope_text}
+
+      RUBRIC:
+      Aspect: ${row_title}
+      Description: ${row_description}
+      ★ (barely passing): ${row_onestar}
+      ★★ (good): ${row_twostar}
+      ★★★ (excellent): ${row_threestar}
+
+      Output format exactly: **${row_title} ★N** — [one-sentence motivation]
+      Replace N with 1, 2, or 3. Be honest and critical.
+</script>
+
 <script>
 /* =========================================================================
- * Fietsbel CE — Cooperative, Provenance-first RAG Chat + Template Document Builder
+ * AIbaarAI — Cooperative, Provenance-first RAG Chat + Template Document Builder
  *
  * External files: marked.min.js (required), transformers.min.js (optional),
  *                 mermaid.min.js (optional)
  * Optional uploads: thesaurus.md, template.md
  *
- * Chat pipeline per turn:
- *   Pass 0  — neutral query decomposition
- *   Retrieval — RRF (semantic + keyword + heading), optional rerank
- *   Pass 1  — JSON decision; retry once on parse failure
- *   Absence — keyword scan if no citations found
- *   Pass 2  — streaming markdown reply with neighbour chunk expansion
- *   Wikify  — annotate thesaurus terms
- *   Pass 3  — compression + follow-up questions
+ * FLOWS: every pass, retrieval parameter and prompt lives in the three
+ * <script type="text/plain" id="flow-…"> blocks above (PDL-style, TOON syntax):
+ *   flow-chat        pass 0 → retrieval(+rerank) → pass 1 → absence scan → pass 2 → pass 3
+ *   flow-doc_prompt  ```prompt block: passes 0-1 + research + rewrite
+ *   flow-doc_eval    ```evaluation block: one rubric row (optional do-rag lookup)
+ * Steps hand results to later steps through variables (`def:` → ${var}).
+ * In a template, a prompt block's output is available to later blocks as
+ * $1, $2 … (n-th prompt block), $prev, or $name when the block has `as: name`.
  *
- * Document builder:
- *   prompt block     — retrieval (passes 0-2) + custom rewrite (replaces pass 3)
- *   evaluation block — per-row rubric eval; optional do-rag per row
- *   output block     — generated / editable content; replaced on re-run
- *
- * Modules: Config, State, Cache, Chunker, Backends, Retrieval, Thesaurus,
- *           UI, NLP, Pipeline, Doc, Setup, Events, Init
+ * Modules: Config, Toon/Flow, State, Cache, Chunker, Backends, Retrieval,
+ *           Thesaurus, UI, NLP, Pipeline, Doc, Setup, Events, Init
  * =========================================================================*/
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
+// Ingest-time settings only, identical for every backend. Query-time settings
+// (retrieval size, RRF, token budgets, history length …) live in the flows.
 const Config = Object.freeze({
-  // Body chunk size budget. Tuned so the post-chunking EMBED_TOKEN_CHAR_CEILING
-  // guard (below) acts as a rare safety net (~1.05x chunk growth) rather than
-  // the primary size mechanism (which it was at 1100/1000/200 — ~1.8x growth,
-  // since most chunks exceeded the embedder's 512-token limit and got
-  // re-split anyway). Markdown-heavy text (headers, lists, bold/italic,
-  // breadcrumbs) runs ~2-2.5 chars/token in BPE tokenizers, NOT the
-  // ~3.5-4 chars/token typical of plain prose — the original estimate
-  // assumed prose density and was wrong by ~2x.
+  // Body chunk size budget. Tuned so the post-chunking token guard below acts
+  // as a rare safety net rather than the primary size mechanism. Markdown-heavy
+  // text runs ~2-2.5 chars/token in BPE/WordPiece tokenizers, NOT the ~3.5-4 of
+  // plain prose.
   CHUNK_MAX_CHARS:           900,
   CHUNK_SLICE:               800,
   CHUNK_OVERLAP:             150,
-  // If structural chunking produces ≤2 chunks averaging above this size,
-  // the document likely has no usable headings/paragraph breaks ("dirty file").
-  // Fall back to overlapping fixed-size slices for better retrieval granularity.
+  // If structural chunking produces ≤2 chunks averaging above this size, the
+  // document likely has no usable headings/paragraph breaks ("dirty file") —
+  // fall back to overlapping fixed-size slices.
   CHUNK_DIRTY_THRESHOLD:    2500,
-  RETRIEVAL_CANDIDATES:       12,
-  RETRIEVAL_TOP_K:             5,
-  // Maximum fraction of RETRIEVAL_CANDIDATES that may come from a single
-  // document. Without this, a document with far more chunks than others
-  // (e.g. 507 vs 88-249 in a mixed corpus) statistically dominates every
-  // RRF rank list purely by volume — more chunks means more "tickets" to
-  // land in any given rank position, regardless of topical relevance.
-  // 0.5 means: of 12 candidates, at most 6 may come from one document.
-  MAX_CANDIDATE_SHARE_PER_DOC: 0.5,
-  HISTORY_MAX_TURNS:           8,
-  PASS0_MAX_TOKENS:          190,   // +30 vs prior to cover the language field
-  RRF_K:                      60,   // Reciprocal Rank Fusion constant
-  CHUNK_EXPAND_MAX:           15,   // max context chunks after neighbour expansion
   EMBED_BATCH_SIZE:           16,   // texts per embedding API request (API backends)
-  EXACT_PHRASE_BONUS:        0.015, // post-RRF bonus for verbatim multi-word phrase
-  // Valid Pass 0 answer_shape values. Anything else (e.g. a model echoing
-  // the enum list itself, like "vergelijking|algemeen|concepts") is treated
-  // as a Pass 0 parse failure and falls back to 'algemeen'.
-  ANSWER_SHAPES: ['regelgeving','procedure','definitie','bedrag','termijn','vergelijking','algemeen'],
 
-  // ── Embedding token-limit guard ──────────────────────────────────────────
-  // Multilingual embedders (nomic-embed-text-v2-moe via LM Studio/llama.cpp)
-  // hard-cap input at 512 tokens — exceeding this BLOCKS the embedding
-  // request entirely in many server implementations (not silent truncation).
-  // CHUNK_MAX_CHARS alone is not a reliable proxy: markdown-heavy text
-  // (headers, lists, tables, bold/italic markers, the heading breadcrumb
-  // itself) commonly runs ~2-2.5 chars/token in BPE tokenizers, NOT the
-  // ~3.5-4 chars/token typical of plain prose. A 1100-char chunk can be
-  // ~500 tokens at worst-case density — already over budget before the
-  // breadcrumb is even added.
-  //
-  // EMBED_TOKEN_LIMIT is the hard ceiling enforced post-chunking:
-  //   - TJS backend: measured exactly via the loaded tokenizer
-  //   - API backends (no client-side tokenizer): enforced via
-  //     EMBED_TOKEN_CHAR_CEILING, a conservative char-based proxy at
-  //     worst-case density, with safety margin.
+  // ── Embedding token-limit guard (same rule for every backend) ───────────
+  // Multilingual embedders hard-cap input at 512 tokens; some servers BLOCK
+  // the request instead of truncating. Every chunk is measured in tokens:
+  // exactly with the loaded tokenizer (WebGPU), otherwise with a
+  // density-aware estimate that is never lower than chars / (CEILING/LIMIT).
   EMBED_TOKEN_LIMIT:         480,   // hard limit 512, 32-token safety margin
-  EMBED_TOKEN_CHAR_CEILING:  950,   // 480 tokens * ~2.0 chars/token (worst case)
+  EMBED_TOKEN_CHAR_CEILING:  950,   // 480 tokens * ~2.0 chars/token (worst case); also the re-split slice size
 });
 
-// ── PROMPTS ───────────────────────────────────────────────────────────────────
+// ── FLOWS: TOON parser + PDL-style flow engine ───────────────────────────────
 /**
- * Every LLM prompt template, in one place, as plain functions returning
- * {system, user} (or a system-only string for Doc's eval rubric).
- *
- * Used identically by Pipeline (chat) and Doc (template builder) — there is
- * exactly ONE Pass 0, ONE Pass 1, ONE Pass 2, ONE Pass 3 template. Backend
- * differences (LM Studio / llama.cpp / Browser AI) affect only HOW these are
- * sent (streaming vs blocking, repetition_penalty, etc — see Backends), never
- * WHAT is sent. If Pass 2 behaves differently across backends, the prompt is
- * provably identical — the difference is in Backends' request parameters.
+ * The flow definitions live in <script type="text/plain" id="flow-…"> blocks
+ * above (one per flow). This section only parses and executes them — it holds
+ * no prompt text and no pass parameters.
  */
-const Prompts = {
-  /** Pass 0 — neutral query decomposition. Returns {system, user}. */
-  pass0(text, ctx, thesHint) {
-    return {
-      system:
-        'You decompose questions into retrieval targets. DO NOT answer or judge permissibility.\n\n'+
-        'Output JSON only:\n'+
-        '{"search_terms":["key nouns, codes"],'+
-        '"answer_shape":"<EXACTLY ONE WORD: regelgeving OR procedure OR definitie OR bedrag OR termijn OR vergelijking OR algemeen>",'+
-        '"likely_contains":["concepts a complete answer would cite"],'+
-        '"language":"<the natural language of the Question below, written out in English, '+
-        'e.g. Dutch, English, German, French, Spanish, Czech, Arabic, Polish>"}\n\n'+
-        'answer_shape MUST be exactly one word from the list above — no combinations, no pipes, no invented values.\n'+
-        'Detect "language" from the Question text itself, not from this system prompt. '+
-        'EXCLUDE directional words: allowed, forbidden, may, must, required, prohibited.'+thesHint,
-      user: ctx+'Question: '+text+'\n\nDecompose (JSON only):',
+
+/** Minimal TOON reader: objects, `key[N]: a,b` arrays, `key[N]{f,…}:` tables,
+ *  `- ` lists, plus `key: |` text blocks. Declared array lengths are verified. */
+const Toon = {
+  KEY: /^([A-Za-z_][\w.\-]*)(?:\[(\d*)(\|)?\])?(?:\{([^}]*)\})?:(?:\s+(.*))?$/,
+
+  scalar(s) {
+    s = s.trim();
+    if (s === '') return '';
+    if (s[0] === '"') { try { return JSON.parse(s); } catch { return s.slice(1, -1); } }
+    if (s === 'true') return true;
+    if (s === 'false') return false;
+    if (s === 'null') return null;
+    if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+    return s;
+  },
+
+  split(s, delim) {
+    const out = []; let cur = '', q = false;
+    for (let k = 0; k < s.length; k++) {
+      const ch = s[k];
+      if (ch === '"' && s[k - 1] !== '\\') { q = !q; cur += ch; }
+      else if (ch === delim && !q) { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  },
+
+  parse(src) {
+    const lines = src.replace(/\t/g, '  ').split('\n').map(raw => {
+      const r = raw.replace(/\s+$/, ''), t = r.trimStart();
+      return { indent: r.length - t.length, text: t, raw: r };
+    });
+    let i = 0;
+    const fail = msg => { throw new Error('TOON regel ' + (i + 1) + ': ' + msg); };
+    const skipBlank = () => { while (i < lines.length && lines[i].text === '') i++; };
+    const isItem = L => L.text === '-' || L.text.startsWith('- ');
+
+    const blockText = parentIndent => {
+      const out = []; let bi = null;
+      while (i < lines.length) {
+        const L = lines[i];
+        if (L.text === '') { out.push(''); i++; continue; }
+        if (L.indent <= parentIndent) break;
+        if (bi === null) bi = L.indent;
+        out.push(L.raw.slice(Math.min(bi, L.indent)));
+        i++;
+      }
+      while (out.length && out[out.length - 1] === '') out.pop();
+      return out.join('\n');
     };
+
+    const parseNested = indent => {
+      skipBlank();
+      if (i >= lines.length || lines[i].indent <= indent) return null;
+      return isItem(lines[i]) ? parseList(lines[i].indent) : parseObject(lines[i].indent);
+    };
+
+    const parseList = indent => {
+      const arr = [];
+      for (;;) {
+        skipBlank();
+        if (i >= lines.length) break;
+        const L = lines[i];
+        if (L.indent < indent) break;
+        if (L.indent > indent || !isItem(L)) { if (L.indent === indent) break; fail('onverwachte inspringing'); }
+        const rest = L.text === '-' ? '' : L.text.slice(2);
+        if (rest === '') { i++; arr.push(parseNested(indent)); }
+        else if (Toon.KEY.test(rest)) {
+          lines[i] = { indent: indent + 2, text: rest, raw: ' '.repeat(indent + 2) + rest };
+          arr.push(parseObject(indent + 2));
+        } else { i++; arr.push(Toon.scalar(rest)); }
+      }
+      return arr;
+    };
+
+    const parseObject = indent => {
+      const obj = {};
+      for (;;) {
+        skipBlank();
+        if (i >= lines.length) break;
+        const L = lines[i];
+        if (L.indent < indent) break;
+        if (L.indent > indent) fail('onverwachte inspringing bij "' + L.text + '"');
+        const m = L.text.match(Toon.KEY);
+        if (!m) fail('geen "sleutel: waarde" — "' + L.text + '"');
+        i++;
+        const [, key, n, pipe, fields, rest = ''] = m;
+        const isArr = L.text.slice(key.length).startsWith('[');
+        const delim = pipe ? '|' : ',';
+        if (fields !== undefined) {                       // tabular array
+          const cols = fields.split(',').map(s => s.trim());
+          const rows = [];
+          while (i < lines.length && (lines[i].text === '' || lines[i].indent > indent)) {
+            if (lines[i].text !== '') rows.push(Object.fromEntries(
+              Toon.split(lines[i].text, delim).map((c, k) => [cols[k], Toon.scalar(c)])));
+            i++;
+          }
+          obj[key] = rows;
+        } else if (isArr) {
+          obj[key] = rest !== '' ? Toon.split(rest, delim).map(Toon.scalar)
+                                 : (parseNested(indent) || []);
+        } else if (rest === '|') obj[key] = blockText(indent);
+        else if (rest === '') obj[key] = parseNested(indent) ?? '';
+        else obj[key] = Toon.scalar(rest);
+        if (isArr && n !== '' && n !== undefined && obj[key].length !== Number(n))
+          fail('"' + key + '" meldt ' + n + ' items maar bevat er ' + obj[key].length);
+      }
+      return obj;
+    };
+
+    const root = parseObject(0);
+    skipBlank();
+    if (i < lines.length) fail('onverwachte inspringing bij "' + lines[i].text + '"');
+    return root;
+  },
+};
+
+/** Flow engine: runs a parsed flow top to bottom over one variable scope. */
+const Flow = {
+  _flows: {}, _steps: {},
+
+  load(name) {
+    if (!this._flows[name]) {
+      const el = document.getElementById('flow-' + name);
+      if (!el) throw new Error('Flow "' + name + '" niet gevonden in index.html');
+      try { this._flows[name] = Toon.parse(el.textContent); }
+      catch (e) { throw new Error('Flow "' + name + '": ' + e.message); }
+    }
+    return this._flows[name];
+  },
+
+  /** Steps of a flow with `use: flow.id` resolved (base step + local overrides). */
+  steps(name, depth = 0) {
+    if (this._steps[name]) return this._steps[name];
+    if (depth > 4) throw new Error('Flow "' + name + '": use-lus');
+    const out = this.load(name).steps.map(s => {
+      if (!s.use) return s;
+      const [fl, id] = String(s.use).split('.');
+      const base = this.steps(fl, depth + 1).find(x => x.id === id);
+      if (!base) throw new Error('Flow "' + name + '": use "' + s.use + '" bestaat niet');
+      const { use, ...over } = s;
+      return { ...base, ...over };
+    });
+    return (this._steps[name] = out);
+  },
+
+  // ── variable scope ────────────────────────────────────────────────────────
+  lookup(V, path) { return String(path).split('.').reduce((o, k) => (o == null ? undefined : o[k]), V); },
+  str(v) {
+    if (v == null) return '';
+    if (Array.isArray(v)) return v.join('; ');
+    return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  },
+  /** ${var} / ${var.path}. Single pass: substituted values are never re-expanded. */
+  interp(tpl, V) {
+    return tpl == null ? '' : String(tpl).replace(/\$\{([\w.]+)\}/g, (_, p) => this.str(this.lookup(V, p)));
+  },
+  truthy(V, spec) {
+    if (typeof spec !== 'string') return !!spec;
+    const neg = spec[0] === '!', v = this.lookup(V, neg ? spec.slice(1) : spec);
+    const t = Array.isArray(v) ? v.length > 0 : typeof v === 'string' ? v.trim().length > 0 : !!v;
+    return neg ? !t : t;
   },
 
   /**
-   * Pass 1 — JSON decision system prompt. Shared by Pipeline (chat) and
-   * Doc.runPromptBlock (template builder) — same context format, same
-   * output schema, same citation rules.
-   *
-   * Explicitly instructs the model to cite ALL chunks that contributed,
-   * not just the single most relevant one — narrow questions with a small
-   * model otherwise tend to cite only one chunk even when several were
-   * used as context.
+   * Run a flow. Returns {stopped, reply, vars}.
+   * hooks (all optional): status(label) · before(id,V,step) · after(id,V,step) ·
+   *   chunk(id,text,accumulated,V) · reuse() · phase(name) · history()
    */
-  pass1System(fileNames) {
-    const ex = fileNames[0] || 'document.md';
-    return 'You are a RAG analyst. Use ONLY the provided context blocks. Do not invent information.\n\n'+
-      'Context format: [Doc: <name>, ChunkId: <name>_<N>, Relevance: <score>]\n\n'+
-      'Output valid JSON only. No markdown. Start with { end with }.\n'+
-      '{"decision":"<phrase>","state_update":{"intent":"<intent>","user_facts":[],"facts_gathered":[]},'+
-      '"citations":[{"document":"'+ex+'","chunkId":"'+ex+'_3"}]}\n\n'+
-      'Rules: no reply field. user_facts from question. facts_gathered from context. Copy chunkId exactly. '+
-      'IMPORTANT: citations should list EVERY context chunk that contributed to your decision or facts_gathered — '+
-      'not just the single most relevant one. If 3 chunks were useful, cite all 3.';
+  async run(name, input, hooks = {}) {
+    const flow = this.load(name), steps = this.steps(name);
+    const V = { ...(flow.consts || {}), ...input };
+    for (const step of steps) {
+      if (step.when !== undefined && !this.truthy(V, step.when)) continue;
+      const handler = this['_' + step.kind];
+      if (!handler) throw new Error('Flow "' + name + '": onbekend stap-type "' + step.kind + '" (' + step.id + ')');
+      if (step.label && hooks.status) hooks.status(step.label, step);
+      if (hooks.before) await hooks.before(step.id, V, step);
+      const stopReply = await handler.call(this, step, V, hooks, steps);
+      if (stopReply !== undefined) return { stopped: true, reply: stopReply, vars: V };
+      if (hooks.after) await hooks.after(step.id, V, step);
+    }
+    return { stopped: false, vars: V };
   },
 
-  /** Pass 1 — user message (context + question). Shared by chat and Doc. */
-  pass1User(context, question) {
-    return context+'\nQuestion: '+question;
+  // ── step kinds ────────────────────────────────────────────────────────────
+  /** set: def = from|value, with unless / default / wrap(%s) */
+  _set(step, V) {
+    let val = step.value !== undefined ? this.interp(step.value, V) : this.str(this.lookup(V, step.from));
+    if (step.unless !== undefined && val === String(step.unless)) val = '';
+    if (!val.trim()) val = step.default !== undefined ? this.interp(step.default, V) : '';
+    else if (step.wrap) val = String(step.wrap).replace('%s', () => val);
+    V[step.def] = val;
   },
 
-  /**
-   * Pass 2 — streaming answer. Returns {system, user}.
-   * IDENTICAL across all backends — see Backends for per-backend request params.
-   */
-  pass2(decision, context, question, langInstr, shapeHint) {
-    return {
-      system: 'You are a practical assistant. '+langInstr+shapeHint+' Use markdown. Be concise.',
-      user: (decision?'Decision: '+decision+'\n\n':'')+context+'\n\nQuestion: '+question+
-        '\n\nWrite a practical markdown answer:',
-    };
+  /** expand: thesaurus-expand the union of the listed list-variables */
+  _expand(step, V) {
+    const list = (step.from || []).flatMap(p => { const v = this.lookup(V, p); return Array.isArray(v) ? v : []; });
+    V[step.def] = Thesaurus.expandTerms(list);
   },
 
-  /**
-   * Pass 3 — compression + follow-up questions. Returns {system, user}.
-   *
-   * Instruction is placed at the END of the user message, immediately
-   * before generation. Small models attend much more reliably to an
-   * instruction that comes right before they start writing than to one
-   * stated at the top of a long prompt — with the draft answer (often
-   * several hundred words) in between, models tend to pattern-match to
-   * "continue the conversation" rather than "compress this specific text".
-   */
-  pass3(question, intentCtx, accFacts, answerShape, draftAnswer, langInstr, lang) {
-    return {
-      system: 'You compress text and generate follow-up questions on request. '+langInstr,
-      user:
-        'Original question: '+question+'\n\n'+
-        'Context: '+intentCtx+'. Known facts: '+accFacts+'. Answer type: '+answerShape+'.\n\n'+
-        'TEXT TO COMPRESS:\n'+draftAnswer+'\n\n'+
-        '---\n'+
-        'Now do exactly this, based ONLY on the TEXT TO COMPRESS above:\n\n'+
-        '[SHORT ANSWER]\n'+
-        'Summarize the TEXT TO COMPRESS in 2-3 sentences. '+langInstr+' No bullet points, no headers.\n\n'+
-        '[FOLLOW-UP]\n'+
-        'Write exactly 2 short follow-up questions (one per line, each starting with ">"), in '+lang+', '+
-        'that build on the specific content of the TEXT TO COMPRESS above.',
-    };
+  /** retrieve: hybrid RRF + optional rerank (or reuse of the previous result) */
+  async _retrieve(step, V, hooks) {
+    let chunks = step.reuse === 'prior' && hooks.reuse ? hooks.reuse() : null;
+    V.reused = !!chunks;
+    if (!chunks) chunks = await Retrieval.search(this.interp(step.query, V), V[step.terms] || [], { ...step, docs: V[step.docs] }, hooks.phase);
+    V[step.def] = chunks;
+    if (!chunks.length && step.on_empty === 'stop') return this.interp(step.reply, V);
   },
 
-  /** Doc prompt block — research compilation (replaces chat Pass 2 for document mode). */
-  docResearch(decision, context, question) {
-    return {
-      system: 'You are a thorough research assistant. Compile all relevant information from the context. '+
-        'Be comprehensive and factual.',
-      user: (decision?'Decision: '+decision+'\n\n':'')+context+'\n\nResearch question: '+question+
-        '\n\nCompile findings:',
-    };
+  /** context: chunks → "CONTEXT:" text block (neighbour expansion per backend) */
+  _context(step, V) { V[step.def] = Pipeline.buildContext(V[step.from], step); },
+
+  _msgs(step, V, hooks) {
+    const m = [];
+    if (step.system) m.push({ role: 'system', content: this.interp(step.system, V) });
+    if (step.history === 'chat' && hooks.history)
+      m.push(...hooks.history().slice(-(step.history_turns || 8) * 2));
+    m.push({ role: 'user', content: this.interp(step.user, V) });
+    return m;
   },
 
-  /** Doc prompt block — rewrite pass (replaces chat Pass 3 for document mode). */
-  docRewrite(rewriteInstr, findings) {
-    return {
-      system: 'You are a professional document writer. Transform research findings into polished document '+
-        'prose. Output only the document text, no meta-commentary.',
-      user: 'Writing instruction: '+rewriteInstr+'\n\nResearch findings:\n'+findings+
-        '\n\nWrite the document section:',
-    };
+  _expect(step, obj) {
+    const out = {};
+    obj = obj && typeof obj === 'object' ? obj : {};
+    for (const r of step.expect || []) {
+      let v = obj[r.field];
+      if (r.type === 'list') v = Array.isArray(v) ? v : [];
+      else if (r.type === 'enum') {
+        if (!String(r.allowed).split('|').includes(v)) {
+          if (v) console.warn('[' + step.id + '] Invalid ' + r.field + ' "' + v + '" — falling back to ' + r.fallback);
+          v = r.fallback;
+        }
+      } else v = (typeof v === 'string' && v.trim()) ? v.trim() : r.fallback;
+      out[r.field] = v;
+    }
+    return out;
   },
 
-  /** Doc evaluation block — one rubric row. Returns {system, user}. */
-  docEvalRow(row, scopeText, context) {
-    return {
-      system: 'You are a strict document quality evaluator. Output ONLY the requested format.',
-      user: 'Evaluate the following text on the rubric criterion below.\n\n'+
-        (context?'REFERENCE CONTEXT:\n'+context:'')+'TEXT TO EVALUATE:\n'+scopeText+'\n\n'+
-        'RUBRIC:\nAspect: '+row.title+'\nDescription: '+row.description+'\n'+
-        '★ (barely passing): '+row.onestar+'\n★★ (good): '+row.twostar+'\n★★★ (excellent): '+row.threestar+'\n\n'+
-        'Output format exactly: **'+row.title+' ★N** — [one-sentence motivation]\n'+
-        'Replace N with 1, 2, or 3. Be honest and critical.',
-    };
+  _parse(step, raw) {
+    if (step.parse === 'extract') return extractJSON(raw);
+    if (step.parse === 'json') {
+      try {
+        const clean = raw.trim().replace(/^`{3}(?:json)?\s*/i, '').replace(/\s*`{3}\s*$/, '');
+        return this._expect(step, JSON.parse(clean));
+      } catch (e) { console.warn('[' + step.id + '] parse failed:', e); return null; }
+    }
+    return raw;
   },
+
+  /** llm: one model call (complete|stream), optional parse / retry / fallback */
+  async _llm(step, V, hooks) {
+    const msgs = this._msgs(step, V, hooks);
+    let raw = '', parsed = null, ok = false;
+    try {
+      const attempts = 1 + (step.retry || 0);
+      for (let a = 0; a < attempts && !ok; a++) {
+        if (a) console.warn('[' + step.id + '] retry...');
+        if (step.mode === 'stream') {
+          let acc = '';
+          const ret = await Backends.inferStream(msgs, t => { acc += t; if (hooks.chunk) hooks.chunk(step.id, t, acc, V); });
+          raw = acc || ret || '';
+        } else raw = await Backends.inferJSON(msgs, step.max_tokens, step.temperature);
+        parsed = this._parse(step, raw);
+        ok = step.valid === 'decision' ? !!(parsed && parsed.decision) : parsed != null;
+      }
+    } catch (e) {
+      if (step.on_error !== 'fallback' && step.on_error !== 'continue') throw e;
+      console.warn('[' + step.id + '] degrading:', e); parsed = null; raw = ''; ok = false;
+    }
+    V[step.def + '_raw'] = raw;
+    if (step.parse && !ok) {
+      if (step.on_fail === 'stop') { V[step.def] = parsed; return this.interp(step.reply, V); }
+      parsed = step.on_error === 'fallback' ? this._expect(step, {}) : (parsed || {});
+    }
+    V[step.def] = step.parse ? parsed : (ok ? raw : '');
+  },
+
+  /** scan_retry: if `of` found no evidence, scan the whole corpus for the terms and re-ask once */
+  async _scan_retry(step, V, hooks, steps) {
+    const p1 = V[step.of] || {}, terms = V[step.terms] || [];
+    const noEvidence = !p1.citations?.length || new RegExp(step.no_evidence, 'i').test(p1.decision || '');
+    if (!noEvidence || !terms.length) return;
+    const find = id => steps.find(s => s.id === id);
+    const ls = find(step.of), rs = find(step.retrieve_step), cs = find(step.context_step);
+    const extras = Retrieval.checkAbsence(terms, V[rs.def], rs);
+    if (!extras.length) return;
+    const aug = [...V[rs.def], ...extras.slice(0, rs.top_k)];
+    const V2 = { ...V, [cs.def]: Pipeline.buildContext(aug, cs), extra_count: extras.length };
+    const msgs = this._msgs({ ...ls, user: ls.user + step.suffix }, V2, hooks);
+    const rp = extractJSON(await Backends.inferJSON(msgs, ls.max_tokens, ls.temperature));
+    if (rp?.citations?.length) {
+      V[rs.def] = aug; V[cs.def] = V2[cs.def]; V[step.of] = rp; V.scan_applied = true;
+    }
+  },
+
+  /** pick: table[]{lang,text} -> text of the row whose lang equals V[from] (case-insensitive), else the "default" row */
+  _pick(step, V) {
+    const want = String(this.lookup(V, step.from) ?? '').trim().toLowerCase();
+    const rows = step.table || [];
+    const row = rows.find(r => String(r.lang).toLowerCase() === want)
+             || rows.find(r => String(r.lang).toLowerCase() === 'default') || rows[0];
+    V[step.def] = row ? String(row.text) : '';
+  },
+
+  /** require: stop the flow with `reply` unless the variable is non-empty */
+  _require(step, V) { if (!this.truthy(V, step.var)) return this.interp(step.reply, V); },
 };
 
 // ── STATE ──────────────────────────────────────────────────────────────────────
@@ -560,6 +1069,7 @@ const State = {
   docRunning:        false,
   docStopRequested:  false,
   docResults:        {},   // Map<blockKey, outputText> — populated from localStorage on launch
+  docNotes:          {},   // Map<blockKey, {warnings:[], chunks:[{label,text,cited}]}> — shown under the block output, not part of $n
   docProvenance:     [],   // [{type, model, embedModel, chunkIds, inputWords, outputWords, stars, ts}]
 };
 
@@ -718,49 +1228,55 @@ const Chunker = {
   },
 
   /**
-   * Hard post-chunking guard: ensures no chunk exceeds the embedder's token
-   * limit (512 for nomic-embed-text-v2-moe and similar multilingual models).
-   * CHUNK_MAX_CHARS is a generation-time target, not a guarantee — heading
-   * breadcrumbs, the oversized-token slicing path, and markdown-heavy
-   * content (high token density) can all produce chunks that exceed the
-   * limit. This is the last line of defense before chunks are sent to the
-   * embedding endpoint.
-   *
-   * TJS backend: measures EXACT token count via the loaded tokenizer and
-   * re-splits any chunk over EMBED_TOKEN_LIMIT.
-   * API backends: no client-side tokenizer available — uses
-   * EMBED_TOKEN_CHAR_CEILING (a conservative worst-case char proxy) instead.
-   *
-   * Re-split chunks preserve the original heading breadcrumb on each piece
-   * and get suffixed IDs (e.g. "_3a", "_3b") to stay unique.
-   *
-   * @param {Array} chunks - output of chunk()
-   * @returns {Promise<Array>} chunks, with any oversized ones re-split
+   * Tokens in `text`: exact via the loaded tokenizer (WebGPU path), otherwise
+   * a density-aware estimate. Returns {n, exact}.
+   */
+  tokenCount(text) {
+    if (State.backend === 'transformers' && State.tjsTokenizer) {
+      try {
+        const ids = State.tjsTokenizer(text).input_ids;
+        const n = ids.size ?? ids.length ?? ids.data?.length;
+        if (n != null) return { n, exact: true };
+      } catch {}
+    }
+    return { n: this.estimateTokens(text), exact: false };
+  },
+
+  /**
+   * WordPiece-style estimate for backends without a client-side tokenizer:
+   * letter runs ≈ 1 token per 3 letters, digit runs ≈ 1 per 2 digits, each
+   * punctuation/symbol = 1 token (tables, codes and numbers are token-dense).
+   * Floored at chars / (CEILING/LIMIT), so it is never less strict than the
+   * old fixed char ceiling.
+   */
+  estimateTokens(text) {
+    let n = 2; const re = /[A-Za-zÀ-ÿ]+|\d+|[^\sA-Za-zÀ-ÿ\d]/g; let m;
+    while ((m = re.exec(text))) {
+      const t = m[0];
+      if (/^\d/.test(t)) n += Math.ceil(t.length / 2);
+      else if (/^[A-Za-zÀ-ÿ]/.test(t)) n += Math.ceil(t.length / 3);
+      else n += 1;
+    }
+    return Math.max(n, Math.ceil(text.length / (Config.EMBED_TOKEN_CHAR_CEILING / Config.EMBED_TOKEN_LIMIT)));
+  },
+
+  /**
+   * Hard post-chunking guard, one rule for every backend: any chunk over
+   * EMBED_TOKEN_LIMIT tokens is re-split (breadcrumb kept on each piece,
+   * suffixed ids "_3a", "_3b"). Token counting is exact where a tokenizer is
+   * loaded and estimated elsewhere (see tokenCount).
    */
   async enforceTokenLimit(chunks) {
-    const useTokenizer = State.backend === 'transformers' && State.tjsTokenizer;
-    const out = [];
-    let resplitCount = 0;
+    const out = []; let resplitCount = 0, exact = 0, ratioSum = 0, ratioN = 0;
 
     for (const c of chunks) {
-      let tokenCount;
-      if (useTokenizer) {
-        try {
-          tokenCount = State.tjsTokenizer(c.text).input_ids.size
-            ?? State.tjsTokenizer(c.text).input_ids.length
-            ?? State.tjsTokenizer(c.text).input_ids.data?.length;
-        } catch { tokenCount = null; }
-      }
-      const overLimit = useTokenizer && tokenCount != null
-        ? tokenCount > Config.EMBED_TOKEN_LIMIT
-        : c.text.length > Config.EMBED_TOKEN_CHAR_CEILING;
-
-      if (!overLimit) { out.push(c); continue; }
+      const t = this.tokenCount(c.text);
+      if (t.exact) { exact++; if (ratioN < 200 && t.n) { ratioSum += this.estimateTokens(c.text) / t.n; ratioN++; } }
+      if (t.n <= Config.EMBED_TOKEN_LIMIT) { out.push(c); continue; }
 
       resplitCount++;
       // Re-split: separate breadcrumb (lines starting with #) from body,
-      // then slice the body into pieces under the char ceiling, re-attaching
-      // the breadcrumb to each piece.
+      // slice the body into pieces under the char ceiling, re-attach the breadcrumb.
       const lines = c.text.split('\n');
       let splitAt = 0;
       while (splitAt < lines.length && /^#{1,3}\s/.test(lines[splitAt])) splitAt++;
@@ -781,12 +1297,25 @@ const Chunker = {
       }
     }
 
-    if (resplitCount > 0) {
-      console.warn(`[Chunker] ${resplitCount} chunk(s) exceeded the ` +
-        `${useTokenizer ? Config.EMBED_TOKEN_LIMIT+'-token' : Config.EMBED_TOKEN_CHAR_CEILING+'-char'} ` +
-        `embedding limit and were re-split. Total chunks: ${chunks.length} → ${out.length}.`);
-    }
+    if (resplitCount > 0)
+      console.warn(`[Chunker] ${resplitCount} chunk(s) exceeded ${Config.EMBED_TOKEN_LIMIT} tokens ` +
+        `(${exact ? 'exact tokenizer' : 'estimated'}) and were re-split. Total chunks: ${chunks.length} → ${out.length}.`);
+    if (ratioN) console.log(`[Chunker] estimator calibration: estimate/exact = ${(ratioSum / ratioN).toFixed(2)} over ${ratioN} chunks ` +
+      `(≥1.0 = safe side; estimate is what non-WebGPU backends use).`);
     return out;
+  },
+
+  /** The one ingest path for every backend: structural chunk → token guard → link neighbours. */
+  async process(text, filename) {
+    const structural = this.chunk(text, filename);
+    const raw = await this.enforceTokenLimit(structural);
+    raw.forEach((c, i) => {
+      c.docName = filename;
+      c.prevId = i > 0 ? raw[i - 1].id : null;
+      c.nextId = i < raw.length - 1 ? raw[i + 1].id : null;
+    });
+    console.log(`[Chunker] "${filename}": ${structural.length} structural → ${raw.length} final chunks`);
+    return raw;
   },
 };
 
@@ -957,9 +1486,9 @@ const Retrieval = {
     const hits=terms.filter(t=>t.length>=2&&h.includes(t)).length;
     return terms.length ? hits/terms.length : 0;
   },
-  exactPhraseBonus(text,phrases) {
+  exactPhraseBonus(text,phrases,bonus) {
     const lower=text.toLowerCase();
-    return phrases.filter(p=>p.includes(' ')&&lower.includes(p)).length*Config.EXACT_PHRASE_BONUS;
+    return phrases.filter(p=>p.includes(' ')&&lower.includes(p)).length*bonus;
   },
   /**
    * Take items from a score-sorted list, capping how many may come from any
@@ -970,6 +1499,7 @@ const Retrieval = {
    * @param {Array}  sorted    — score-sorted items, each with .docName
    * @param {number} limit     — total items to return
    * @param {number} maxShare  — fraction 0-1, max share from one document
+   * (limit / maxShare / rrf_k / bonus come from the retrieve step of the flow)
    */
   capPerDocument(sorted, limit, maxShare) {
     const maxPerDoc = Math.max(1, Math.floor(limit * maxShare));
@@ -995,46 +1525,59 @@ const Retrieval = {
     return result;
   },
 
-  async search(query, expandedTerms=[], onPhase) {
+  /**
+   * Hybrid retrieval. `o` is the flow's retrieve step:
+   * {candidates, top_k, rrf_k, max_share_per_doc, exact_phrase_bonus, rerank}.
+   */
+  async search(query, expandedTerms=[], o, onPhase) {
     const baseTerms = this.tokenize(query);
     const allTerms  = expandedTerms.length
       ? [...new Set([...baseTerms,...expandedTerms.flatMap(t=>[t.toLowerCase(),...this.tokenize(t)])])]
       : baseTerms;
     const phrases = expandedTerms.filter(t=>t.includes(' ')).map(t=>t.toLowerCase());
 
+    // optional document filter (flow input `docs`: exact doc names, already resolved)
+    const pool = o.docs?.length ? State.chunks.filter(c=>o.docs.includes(c.docName)) : State.chunks;
+    if (!pool.length) return [];
+
     if (onPhase) onPhase('embed');
     const qVec = await Backends.embed(query,'query');
 
     if (onPhase) onPhase('hybrid');
-    const bySem = [...State.chunks].map(c=>({id:c.id,s:this.cosine(qVec,c.vector)})).sort((a,b)=>b.s-a.s);
-    const byKw  = [...State.chunks].map(c=>({id:c.id,s:this.keywordScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
-    const byHd  = [...State.chunks].map(c=>({id:c.id,s:this.headingMatchScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
+    const bySem = [...pool].map(c=>({id:c.id,s:this.cosine(qVec,c.vector)})).sort((a,b)=>b.s-a.s);
+    const byKw  = [...pool].map(c=>({id:c.id,s:this.keywordScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
+    const byHd  = [...pool].map(c=>({id:c.id,s:this.headingMatchScore(c.text,allTerms)})).sort((a,b)=>b.s-a.s);
 
     const semR=new Map(bySem.map((c,i)=>[c.id,i]));
     const kwR =new Map(byKw.map((c,i) =>[c.id,i]));
     const hdR =new Map(byHd.map((c,i) =>[c.id,i]));
-    const N=State.chunks.length, K=Config.RRF_K;
+    const N=pool.length, K=o.rrf_k;
 
-    let cands = State.chunks.map(c=>({
-      ...c,
-      score: 1/(K+(semR.get(c.id)??N)) + 1/(K+(kwR.get(c.id)??N)) + 1/(K+(hdR.get(c.id)??N))
-           + this.exactPhraseBonus(c.text,phrases),
+    const cosById = new Map(bySem.map(c=>[c.id,c.s]));
+    let cands = pool.map(c=>({
+        ...c,
+        cos: cosById.get(c.id),
+        score: 1/(K+(semR.get(c.id)??N)) + 1/(K+(kwR.get(c.id)??N)) 
+           + this.exactPhraseBonus(c.text,phrases,o.exact_phrase_bonus),
     }));
     cands.sort((a,b)=>b.score-a.score);
-    cands = this.capPerDocument(cands, Config.RETRIEVAL_CANDIDATES, Config.MAX_CANDIDATE_SHARE_PER_DOC);
+    cands = this.capPerDocument(cands, o.candidates, o.max_share_per_doc);
 
-    const hasReranker = State.backend==='transformers'
+    const hasReranker = o.rerank==='off' ? false : State.backend==='transformers'
       ? (State.tjsRerankModel&&State.tjsRerankTokenizer)
       : (State.backend==='llamacpp'&&!!State.rerankModel);
     if (hasReranker) { if (onPhase) onPhase('rerank'); cands=await Backends.rerank(query,cands); }
-    return this.capPerDocument(cands, Config.RETRIEVAL_TOP_K, Config.MAX_CANDIDATE_SHARE_PER_DOC);
-  },
-  checkAbsence(terms, alreadyFetched=[]) {
+        const top = this.capPerDocument(cands, o.top_k, o.max_share_per_doc);
+        const floor = Number(o.min_cosine) || 0;
+        console.log('[Retrieve] best cosine', bySem[0].s.toFixed(3), '| floor', floor);
+        return floor ? top.filter(c => c.cos >= floor) : top;
+    },
+    checkAbsence(terms, alreadyFetched=[], o) {
     if (!terms?.length) return [];
     const ids=new Set(alreadyFetched.map(c=>c.id));
     const lower=terms.filter(t=>t.length>=3).map(t=>t.toLowerCase());
     const matches = State.chunks.filter(c=>!ids.has(c.id)&&lower.some(t=>c.text.toLowerCase().includes(t)));
-    return this.capPerDocument(matches, Config.RETRIEVAL_CANDIDATES, Config.MAX_CANDIDATE_SHARE_PER_DOC);
+    return this.capPerDocument(matches, o.candidates, o.max_share_per_doc);
   },
 };
 
@@ -1262,250 +1805,163 @@ function escapeHtml(str) {
 function wordCount(str) { return str.trim().split(/\s+/).filter(Boolean).length; }
 
 // ── MODULE: Pipeline ──────────────────────────────────────────────────────────
+/**
+ * Chat host. The passes themselves are defined in flow-chat; this module only
+ * supplies inputs, renders status / streaming / pass-3 UI through flow hooks,
+ * and keeps the compact chat history.
+ */
 const Pipeline = {
-  buildContext(retrievedChunks) {
+  /** Chunks that end up in the context, in order. `opts` = the flow's context step: {neighbours: auto|on|off, max}. auto = neighbours except on WebGPU. */
+  contextChunks(retrievedChunks, opts={}) {
     const chunkMap=new Map(State.chunks.map(c=>[c.id,c]));
     const contextIds=new Set(retrievedChunks.map(c=>c.id));
-    const scores=new Map(retrievedChunks.map(c=>[c.id,c.score]));
-    if (State.backend!=='transformers') {
+    const mode=opts.neighbours||'auto';
+    if (mode==='on' || (mode==='auto' && State.backend!=='transformers')) {
       retrievedChunks.forEach(c=>{
         if (c.prevId&&chunkMap.has(c.prevId)) contextIds.add(c.prevId);
         if (c.nextId&&chunkMap.has(c.nextId)) contextIds.add(c.nextId);
       });
     }
-    const ordered=Array.from(contextIds).map(id=>chunkMap.get(id)).filter(Boolean)
+    return Array.from(contextIds).map(id=>chunkMap.get(id)).filter(Boolean)
       .sort((a,b)=>{
         if (a.docName!==b.docName) return a.docName.localeCompare(b.docName);
         return (parseInt(a.id.split('_').at(-1))||0)-(parseInt(b.id.split('_').at(-1))||0);
-      }).slice(0,Config.CHUNK_EXPAND_MAX);
-    return 'CONTEXT:\n'+ordered.map(c=>{
+      }).slice(0,opts.max||15);
+  },
+
+  buildContext(retrievedChunks, opts={}) {
+    const scores=new Map(retrievedChunks.map(c=>[c.id,c.score]));
+    return 'CONTEXT:\n'+this.contextChunks(retrievedChunks,opts).map(c=>{
       const s=scores.get(c.id);
       const score=typeof s==='number'?', Relevance: '+s.toFixed(2):'';
       return '[Doc: '+c.docName+', ChunkId: '+c.id+score+']\n'+c.text;
     }).join('\n\n');
   },
 
-  async queryExpand(text) {
-    const prevUser=State.chatHistory.filter(m=>m.role==='user').slice(-1)[0]?.content??'';
-    const ctx=prevUser&&prevUser!==text ? 'Previous question: '+prevUser+'\n' : '';
-    const thesHint=State.thesaurus
-      ? '\nAvailable vocabulary: '+Array.from(State.thesaurus.entries())
-          .filter(([k,v])=>k===v.term.toLowerCase()).map(([,v])=>v.term).slice(0,40).join(', ')
+  /** Thesaurus vocabulary hint input (first 40 canonical terms), '' without thesaurus. */
+  thesTerms() {
+    return State.thesaurus
+      ? Array.from(State.thesaurus.entries()).filter(([k,v])=>k===v.term.toLowerCase()).map(([,v])=>v.term).slice(0,40).join(', ')
       : '';
-    const p0prompt = Prompts.pass0(text, ctx, thesHint);
-    const msgs=[
-      {role:'system',content:p0prompt.system},
-      {role:'user',content:p0prompt.user},
-    ];
-    try {
-      const raw=await Backends.inferJSON(msgs,Config.PASS0_MAX_TOKENS,0.0);
-      const clean=raw.trim().replace(/^`{3}(?:json)?\s*/i,'').replace(/\s*`{3}\s*$/,'');
-      const parsed=JSON.parse(clean);
-      const shape = Config.ANSWER_SHAPES.includes(parsed.answer_shape) ? parsed.answer_shape : 'algemeen';
-      if (parsed.answer_shape && shape==='algemeen' && parsed.answer_shape!=='algemeen')
-        console.warn('[Pass 0] Invalid answer_shape "'+parsed.answer_shape+'" — falling back to algemeen. Raw:', raw);
-      return {
-        search_terms:Array.isArray(parsed.search_terms)?parsed.search_terms:[],
-        answer_shape:shape,
-        likely_contains:Array.isArray(parsed.likely_contains)?parsed.likely_contains:[],
-        language: typeof parsed.language==='string'&&parsed.language.trim() ? parsed.language.trim() : 'English',
-      };
-    } catch(e) {
-      console.warn('[Pass 0] Degrading:',e);
-      return {search_terms:[],answer_shape:'algemeen',likely_contains:[],language:'English'};
-    }
   },
-
-  /** Wrap a pipeline stage: sets status text, runs fn, propagates errors with status cleanup. */
-  async phase(status, label, fn) {
-    status.textContent = label;
-    document.getElementById('chat-history').scrollTop = document.getElementById('chat-history').scrollHeight;
-    return fn();
-  },
-
-  /** Pass 0 + RRF retrieval (or reuse of cached chunks). Returns {p0, allExpandedTerms, chunks}. */
-  async retrieve(text, status) {
-    const history = document.getElementById('chat-history');
-    let rerankTimer = null;
-
-    const p0 = await this.phase(status, '🔍 Vraag analyseren (pass 0)...', () => this.queryExpand(text));
-    const allExpandedTerms = Thesaurus.expandTerms([...p0.search_terms, ...p0.likely_contains]);
-
-    const onRetrievalPhase = phase => {
-      if (phase==='embed')  status.textContent='🔍 Vraag inbedden...';
-      if (phase==='hybrid') status.textContent='🔍 RRF retrieval...';
-      if (phase==='rerank') {
-        const t0=Date.now(); status.textContent='⚖️ Reranking...';
-        rerankTimer=setInterval(()=>{
-          status.textContent='⚖️ Reranking... '+((Date.now()-t0)/1000).toFixed(1)+'s';
-          history.scrollTop=history.scrollHeight;
-        },400);
-      }
-      history.scrollTop=history.scrollHeight;
-    };
-
-    const hasPrior = State.chatHistory.length > 1;
-    let chunks;
-    if (hasPrior && State.lastChunks && !State.forceNewSearch) {
-      chunks = State.lastChunks; status.textContent = '♻️ Vorige zoekresultaten hergebruikt';
-    } else {
-      chunks = await Retrieval.search(text, allExpandedTerms, onRetrievalPhase);
-      State.lastChunks = chunks;
-    }
-    State.forceNewSearch = false;
-    if (rerankTimer) clearInterval(rerankTimer);
-
-    return { p0, allExpandedTerms, chunks };
-  },
-
-  /** Pass 1 JSON decision with one retry on parse failure. Returns parsed object or null. */
-  async decide(text, chunks, status) {
-    return this.phase(status, '🧠 Beslissing nemen (pass 1)...', async () => {
-      const msgs = [...State.chatHistory, {role:'user',content:Prompts.pass1User(this.buildContext(chunks), text)}];
-      let raw = await Backends.inferJSON(msgs, 400, 0.0);
-      let parsed = extractJSON(raw);
-      if (!parsed) {
-        console.warn('[Pass 1] Retry...');
-        raw = await Backends.inferJSON(msgs, 400, 0.0);
-        parsed = extractJSON(raw);
-        if (!parsed) return { parsed: null, raw };
-      }
-      return { parsed, raw };
-    });
-  },
-
-  /** If Pass 1 found no evidence, scan full corpus and retry once with augmented context. */
-  async absenceCheck(text, parsed, chunks, allExpandedTerms) {
-    const noEvidence = !parsed.citations?.length ||
-      /niet gevonden|not found|geen informatie|insufficient|onbekend/i.test(parsed.decision||'');
-    if (!noEvidence || !allExpandedTerms.length) return { parsed, chunks };
-
-    const extras = Retrieval.checkAbsence(allExpandedTerms, chunks);
-    if (!extras.length) return { parsed, chunks };
-
-    const aug = [...chunks, ...extras.slice(0, Config.RETRIEVAL_TOP_K)];
-    const retryMsgs = [...State.chatHistory, {role:'user',content:
-      Prompts.pass1User(this.buildContext(aug), text)+'\n\n['+extras.length+' extra chunks via full-corpus scan]'}];
-    const rp = extractJSON(await Backends.inferJSON(retryMsgs, 400, 0.0));
-    if (rp?.citations?.length) {
-      State.lastChunks = aug;
-      return { parsed: rp, chunks: aug };
-    }
-    return { parsed, chunks };
-  },
+  /** First document name — example in the pass-1 JSON schema. */
+  exampleDoc() { return State.chunks[0]?.docName || 'document.md'; },
 
   async run(text) {
     const history=document.getElementById('chat-history');
+    const scroll=()=>{ history.scrollTop=history.scrollHeight; };
     const status=UI.showStatus('🔍 Vraag analyseren (pass 0)...');
+    let rerankTimer=null, p2status=null, p3status=null, bubble=null;
+
+    const prevUser=State.chatHistory.filter(m=>m.role==='user').slice(-1)[0]?.content??'';
+    const hasPrior=State.chatHistory.length>0;
+
+    const hooks={
+      status:label=>{ if (status.isConnected) { status.textContent=label; scroll(); } },
+      history:()=>State.chatHistory,
+      reuse:()=>{
+        if (hasPrior && State.lastChunks && !State.forceNewSearch) {
+          status.textContent='♻️ Vorige zoekresultaten hergebruikt'; return State.lastChunks;
+        }
+        return null;
+      },
+      phase:phase=>{
+        if (phase==='embed')  status.textContent='🔍 Vraag inbedden...';
+        if (phase==='hybrid') status.textContent='🔍 RRF retrieval...';
+        if (phase==='rerank') {
+          const t0=Date.now(); status.textContent='⚖️ Reranking...';
+          rerankTimer=setInterval(()=>{
+            status.textContent='⚖️ Reranking... '+((Date.now()-t0)/1000).toFixed(1)+'s'; scroll();
+          },400);
+        }
+        scroll();
+      },
+      chunk:(id,t)=>{ if (id==='p2'&&bubble) bubble.append(t); },
+
+      before:(id,V,step)=>{
+        if (id==='p2') {
+          // Pass 1 accepted → state, highlights, diagnostics
+          const p1=V.p1;
+          if (p1.state_update) UI.updateState(p1.state_update);
+          if (p1.citations?.length) {
+            UI.clearHighlights(); p1.citations.forEach(c=>{if(c.chunkId) UI.highlightChunk(c.chunkId);});
+          }
+          // Narrow question + small model often cites fewer chunks than were in
+          // context — that is Pass 1's choice, not a retrieval limit.
+          console.log('[Pass 1] chunks in context:', V.chunks.length,
+            '— chunks cited:', p1.citations?.length || 0,
+            V.chunks.map(c=>c.id), '→ cited:', (p1.citations||[]).map(c=>c.chunkId));
+
+          status.remove();
+          p2status=State.backend==='lmstudio'?UI.showStatus(step.label):null;
+          const thinking=document.createElement('details');
+          thinking.className='msg bot thinking-block';
+          thinking.style.cssText='font-size:.82rem;color:#555;background:#f8f8f8;border-color:#ddd';
+          const thinkingSummary=document.createElement('summary');
+          thinkingSummary.style.cssText='cursor:pointer;font-size:.8rem;color:#888;user-select:none;padding:.3rem 0';
+          thinkingSummary.textContent='🧠 Redenering (klik om te tonen/verbergen)';
+          thinking.append(thinkingSummary); history.append(thinking);
+          bubble=UI.createBubble(thinking);
+        }
+        if (id==='p3') {
+          V.acc_facts=(State.jsonState.facts_gathered||[]).join('; ')||'none yet';
+          V.intent_ctx=State.jsonState.intent_history?.length
+            ? 'Prior: '+State.jsonState.intent_history.join(' → ')+' → '+State.jsonState.intent
+            : 'Current: '+(State.jsonState.intent||'unknown');
+          p3status=UI.showStatus(step.label);
+        }
+      },
+
+      after:(id,V)=>{
+        if (id==='retrieve') {
+          if (!V.reused) State.lastChunks=V.chunks;
+          State.forceNewSearch=false;
+          if (rerankTimer) { clearInterval(rerankTimer); rerankTimer=null; }
+        }
+        if (id==='scan' && V.scan_applied) State.lastChunks=V.chunks;
+        if (id==='p2') {
+          if (p2status) p2status.remove();
+          bubble.finalize(V.p1.citations||[]);
+          if (State.thesaurus) Thesaurus.wikify(bubble.getBody());
+        }
+        if (id==='p3') {
+          p3status.remove();
+          const p3text=V.p3||'';
+          if (p3text.trim()) {
+            const p3el=document.createElement('div'); p3el.className='msg bot pass3-block';
+            const p3body=document.createElement('div'); p3body.className='md-body';
+            p3body.innerHTML=typeof marked!=='undefined'?marked.parse(
+              p3text.replace(/\[SHORT ANSWER\]/gi,'').replace(/\[FOLLOW-UP\]/gi,'\n\n---\n\n**Mogelijke vervolgvragen:**\n\n').trim()
+            ):p3text;
+            if (State.thesaurus) Thesaurus.wikify(p3body);
+            p3el.append(p3body);
+            p3el.querySelectorAll('blockquote').forEach(el=>{
+              const q=el.textContent.trim().replace(/^>\s*/,'');
+              if (q.length>5) {
+                el.style.cursor='pointer'; el.title='Klik om te stellen';
+                el.addEventListener('click',()=>{
+                  document.getElementById('chat-input').value=q;
+                  document.getElementById('input-form').requestSubmit();
+                });
+              }
+            });
+            history.append(p3el); scroll();
+          }
+        }
+      },
+    };
 
     try {
-      // ── Pass 0 + Retrieval ────────────────────────────────────────────────
-      const { p0, allExpandedTerms, chunks: retrievedChunks } = await this.retrieve(text, status);
-      let chunks = retrievedChunks;
+      const res=await Flow.run('chat',{
+        question:text, prev_question:prevUser!==text?prevUser:'',
+        thes_terms:this.thesTerms(), example_doc:this.exampleDoc(),
+      },hooks);
 
-      // Hard stop: if retrieval found nothing, say so — do not send empty context to the LLM.
-      if (!chunks.length) {
-        status.remove();
-        UI.addMessage('bot','❌ Geen relevante chunks gevonden voor deze vraag.\n\nI don\'t know — the loaded documents contain no information that matches your question.');
-        return;
-      }
+      // Flow stopped itself (no chunks / no valid JSON / no citations): show its reply.
+      if (res.stopped) { status.remove(); UI.addMessage('bot',res.reply); return; }
 
-      // Language is detected by the LLM itself in Pass 0 (p0.language) — no heuristic.
-      const lang=p0.language;
-      const langInstr='Respond in '+lang+'. Match the language of the user question exactly.';
-
-      // ── Pass 1: JSON decision ────────────────────────────────────────────
-      const { parsed: p1parsed, raw: p1raw } = await this.decide(text, chunks, status);
-      if (!p1parsed) {
-        status.remove();
-        UI.addMessage('bot','⚠️ Pass 1: no valid JSON after retry.\n\n'+p1raw);
-        return;
-      }
-      let parsed = p1parsed;
-
-      // ── Absence check ─────────────────────────────────────────────────────
-      ({ parsed, chunks } = await this.absenceCheck(text, parsed, chunks, allExpandedTerms));
-
-      // If Pass 1 + absence retry found no citations, the corpus has no answer.
-      // Stop here — do not let Pass 2 fill the gap with model knowledge.
-      if (!parsed.citations?.length) {
-        status.remove();
-        UI.addMessage('bot','❌ De geladen documenten bevatten geen informatie over dit onderwerp.\n\nI don\'t know — nothing in the loaded documents is relevant to this question.');
-        return;
-      }
-
-      if (parsed.state_update) UI.updateState(parsed.state_update);
-      if (parsed.citations?.length) {
-        UI.clearHighlights(); parsed.citations.forEach(c=>{if(c.chunkId) UI.highlightChunk(c.chunkId);});
-      }
-
-      // Diagnostic: compare chunks retrieved vs chunks cited by Pass 1.
-      // A narrow question + a small model often cites fewer chunks than
-      // were actually placed in context — this is Pass 1's choice, not a
-      // retrieval limitation (retrieval always returns up to RETRIEVAL_TOP_K).
-      console.log('[Pass 1] chunks in context:', chunks.length,
-        '— chunks cited:', parsed.citations?.length || 0,
-        chunks.map(c=>c.id), '→ cited:', (parsed.citations||[]).map(c=>c.chunkId));
-
-      // ── Pass 2: streaming reply ──────────────────────────────────────────
-      status.remove();
-      const p2status=State.backend==='lmstudio'?UI.showStatus('✍️ Antwoord opstellen (pass 2)...'):null;
-      const thinking=document.createElement('details');
-      thinking.className='msg bot thinking-block';
-      thinking.style.cssText='font-size:.82rem;color:#555;background:#f8f8f8;border-color:#ddd';
-      const thinkingSummary=document.createElement('summary');
-      thinkingSummary.style.cssText='cursor:pointer;font-size:.8rem;color:#888;user-select:none;padding:.3rem 0';
-      thinkingSummary.textContent='🧠 Redenering (klik om te tonen/verbergen)';
-      thinking.append(thinkingSummary); history.append(thinking);
-      const bubble=UI.createBubble(thinking);
-      const shapeHint=p0.answer_shape&&p0.answer_shape!=='algemeen'?' Expected: '+p0.answer_shape+'.':'';
-      const p2prompt = Prompts.pass2(parsed.decision, this.buildContext(chunks), text, langInstr, shapeHint);
-      await Backends.inferStream([
-        {role:'system',content:p2prompt.system},
-        {role:'user',content:p2prompt.user},
-      ],chunk=>bubble.append(chunk));
-      if (p2status) p2status.remove();
-      const replyText=bubble.finalize(parsed.citations||[]);
-      if (State.thesaurus) Thesaurus.wikify(bubble.getBody());
-
-      // ── Pass 3: compression + follow-up ──────────────────────────────────
-      const accFacts=(State.jsonState.facts_gathered||[]).join('; ')||'none yet';
-      const intentCtx=State.jsonState.intent_history?.length
-        ? 'Prior: '+State.jsonState.intent_history.join(' → ')+' → '+State.jsonState.intent
-        : 'Current: '+(State.jsonState.intent||'unknown');
-      let p3text='';
-      const p3status = UI.showStatus('💬 Samenvatting & vervolgvragen (pass 3)...');
-      try {
-        const p3prompt = Prompts.pass3(text, intentCtx, accFacts, p0.answer_shape, replyText, langInstr, lang);
-        p3text=await Backends.inferJSON([
-          {role:'system',content:p3prompt.system},
-          {role:'user',content:p3prompt.user},
-        ],300,0.3);
-      } catch(e3) { console.warn('Pass 3 failed:',e3); }
-      p3status.remove();
-
-      if (p3text.trim()) {
-        const p3el=document.createElement('div'); p3el.className='msg bot pass3-block';
-        const p3body=document.createElement('div'); p3body.className='md-body';
-        p3body.innerHTML=typeof marked!=='undefined'?marked.parse(
-          p3text.replace(/\[SHORT ANSWER\]/gi,'').replace(/\[FOLLOW-UP\]/gi,'\n\n---\n\n**Mogelijke vervolgvragen:**\n\n').trim()
-        ):p3text;
-        if (State.thesaurus) Thesaurus.wikify(p3body);
-        p3el.append(p3body);
-        p3el.querySelectorAll('blockquote').forEach(el=>{
-          const q=el.textContent.trim().replace(/^>\s*/,'');
-          if (q.length>5) {
-            el.style.cursor='pointer'; el.title='Klik om te stellen';
-            el.addEventListener('click',()=>{
-              document.getElementById('chat-input').value=q;
-              document.getElementById('input-form').requestSubmit();
-            });
-          }
-        });
-        history.append(p3el); history.scrollTop=history.scrollHeight;
-      }
-
-      // ── Update compact history ───────────────────────────────────────────
+      // ── Update compact history (flow slices to history_turns when it reads it) ──
+      const parsed=res.vars.p1;
       const compact=JSON.stringify({
         decision:parsed.decision||'',
         state_update:{intent:parsed.state_update?.intent||'',user_facts:parsed.state_update?.user_facts||[],
@@ -1514,12 +1970,11 @@ const Pipeline = {
       });
       State.chatHistory.push({role:'user',content:text});
       State.chatHistory.push({role:'assistant',content:compact});
-      const [sys,...qa]=State.chatHistory;
-      if (qa.length>Config.HISTORY_MAX_TURNS*2) State.chatHistory=[sys,...qa.slice(-(Config.HISTORY_MAX_TURNS*2))];
-
     } catch(e) {
       try { status.remove(); } catch {}
       throw e;
+    } finally {
+      if (rerankTimer) clearInterval(rerankTimer);
     }
   },
 };
@@ -1546,6 +2001,7 @@ const Doc = {
   STORAGE_KEY:      'fietsbel-template',
   RESULTS_KEY:      'fietsbel-template-results',
   PROVENANCE_KEY:   'fietsbel-template-provenance',
+  NOTES_KEY:        'fietsbel-template-notes',
 
   /**
    * Render markdown to HTML, then apply thesaurus wikification.
@@ -1595,7 +2051,8 @@ const Doc = {
         ? match[3].split('\n').map(l=>l.startsWith(indent)?l.slice(indent.length):l).join('\n')
         : match[3];
       blocks.push({type,content,raw:match[0],start:match.index,end:match.index+match[0].length,
-        key:(type==='prompt'||type==='evaluation')?this.hashBlock(match[0]):null});
+        key:(type==='prompt'||type==='evaluation')?this.hashBlock(match[0]):null,
+        as:type==='prompt'?this.parsePromptBlock(content).as:''});
       last=match.index+match[0].length;
     }
     if (last<source.length)
@@ -1603,26 +2060,70 @@ const Doc = {
     return blocks;
   },
 
-  /** Parse prompt block content → {retrieval, rewrite} (multi-line safe) */
+  /**
+   * Parse prompt block content → {retrieval, rewrite, as} (multi-line safe).
+   *   as: name      optional — result becomes $name for later blocks
+   *   docs: a.md, b.md   optional — retrieve only from these uploaded documents
+   *   retrieval:    what to look up / research (may use $1, $prev, $name …)
+   *   rewrite:      how to write it up (may use $1, $prev, $name …);
+   *                 `rewrite: none` skips the rewrite pass and returns the research findings
+   */
   parsePromptBlock(content) {
     const lines=content.trim().split('\n');
-    let retrieval=[], rewrite=[], current=null;
+    let retrieval=[], rewrite=[], as='', docs=[], current=null;
     for (const line of lines) {
       if (line.startsWith('retrieval:')) { current='r'; retrieval.push(line.slice('retrieval:'.length).trim()); }
       else if (line.startsWith('rewrite:')) { current='w'; rewrite.push(line.slice('rewrite:'.length).trim()); }
+      else if (line.startsWith('docs:')) {
+        current=null; docs=line.slice(5).split(',').map(d=>d.trim()).filter(Boolean);
+      }
+      else if (line.startsWith('as:')) {
+        current=null; const n=line.slice(3).trim().replace(/^\$/,'');
+        as=/^[A-Za-z_]\w*$/.test(n)?n:'';
+      }
       else if (current==='r'&&line.trim()) retrieval.push(line.trim());
       else if (current==='w'&&line.trim()) rewrite.push(line.trim());
     }
-    return {retrieval:retrieval.join(' '),rewrite:rewrite.join(' ')};
+    return {retrieval:retrieval.join(' '),rewrite:rewrite.join(' '),as,docs};
+  },
+
+  /**
+   * Substitute $1, $2 … (n-th prompt block), $prev (nearest prompt block above)
+   * and $name (blocks with `as: name`) by those blocks' stored results. ${1} also
+   * works when the name is followed by letters. Unknown names (e.g. "$5 fee")
+   * stay as typed; a known block without a result yet is an error.
+   */
+  substitute(text, blocks, idx) {
+    if (!text || !text.includes('$')) return text;
+    const prompts=blocks.map((b,i)=>({b,i})).filter(x=>x.b.type==='prompt');
+    const byName=new Map();
+    prompts.forEach((x,n)=>{ byName.set(String(n+1),x.b); if (x.b.as) byName.set(x.b.as,x.b); });
+    const above=[...prompts].reverse().find(x=>x.i<idx);
+    return text.replace(/\$(?:\{(\w+)\}|(\w+))/g,(m,a,b)=>{
+      const name=a||b;
+      if (name==='prev' && !byName.has('prev')) {
+        if (!above) throw new Error('$prev: er staat geen prompt-blok boven dit blok.');
+        return this.blockResult(above.b,name);
+      }
+      const blk=byName.get(name);
+      return blk ? this.blockResult(blk,name) : m;
+    });
+  },
+  blockResult(blk,name) {
+    const res=State.docResults[blk.key];
+    if (res===undefined) throw new Error('$'+name+' heeft nog geen resultaat — voer dat prompt-blok eerst uit.');
+    return res.trim();
   },
 
   /** Parse evaluation block content → array of rubric rows */
   parseEvalRows(content) {
     return content.trim().split('\n')
       .filter(l=>l.trim().startsWith('|'))
+      .filter(l=>!/^\|[\s:|-]+\|?\s*$/.test(l.trim()))
       .map(l=>{
         const cols=l.split('|').map(c=>c.trim()).filter(Boolean);
         if (cols.length<3) return null;
+        if (/^1\s*★/.test(cols[2])) return null;
         return {
           title:cols[0]||'', description:cols[1]||'',
           onestar:cols[2]||'', twostar:cols[3]||'', threestar:cols[4]||'',
@@ -1666,43 +2167,57 @@ const Doc = {
     return scope.trim();
   },
 
-  /** Run a prompt block: passes 0-2 (research) + rewrite pass (document prose) */
-  async runPromptBlock(block, onChunk) {
-    const {retrieval,rewrite}=this.parsePromptBlock(block.content);
+  /**
+   * Match requested document names (case-insensitive, ".md" optional) against the
+   * uploaded set. Returns {names, missing}.
+   */
+  resolveDocs(requested) {
+    const have=[...new Set(State.chunks.map(c=>c.docName))];
+    const norm=n=>n.toLowerCase().replace(/\.md$/,'');
+    const names=[], missing=[];
+    for (const r of requested) {
+      const hit=have.find(h=>norm(h)===norm(r));
+      if (hit) { if (!names.includes(hit)) names.push(hit); } else missing.push(r);
+    }
+    return {names,missing};
+  },
+
+  /** Run a prompt block through flow-doc_prompt (research + optional rewrite). */
+  async runPromptBlock(blocks, blockIdx, onChunk) {
+    const block=blocks[blockIdx];
+    const {retrieval,rewrite,docs:wanted}=this.parsePromptBlock(block.content);
     if (!retrieval) throw new Error('Geen retrieval: prompt opgegeven.');
-    const sysPrompt=Setup.buildSystemPrompt([...new Set(State.chunks.map(c=>c.docName))]);
 
-    const p0=await Pipeline.queryExpand(retrieval);
-    const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
-    const chunks=await Retrieval.search(retrieval,expanded,null);
-    if (!chunks.length) throw new Error('❌ Geen relevante chunks gevonden — I don\'t know.');
-    const context=Pipeline.buildContext(chunks);
+    // docs: filter. Missing documents never block the run — they become a warning.
+    const warnings=[], {names,missing}=this.resolveDocs(wanted);
+    if (missing.length) warnings.push('Document'+(missing.length>1?'en':'')+' niet gevonden in de geüploade set: '+
+      missing.map(m=>'`'+m+'`').join(', ')+'. '+
+      (names.length?'Gefilterd op: '+names.map(n=>'`'+n+'`').join(', ')+'.':'Er is niet gefilterd: het hele corpus is doorzocht.'));
 
-    const p1msgs=[{role:'system',content:sysPrompt},{role:'user',content:Prompts.pass1User(context, retrieval)}];
-    let p1raw=await Backends.inferJSON(p1msgs,400,0.0);
-    let parsed=extractJSON(p1raw)||{};
-    if (!parsed.decision) { p1raw=await Backends.inferJSON(p1msgs,400,0.0); parsed=extractJSON(p1raw)||{}; }
+    const question=this.substitute(retrieval,blocks,blockIdx);
+    const skipRewrite=/^none$/i.test(rewrite.trim());
+    const rewriteGiven=skipRewrite?'':this.substitute(rewrite,blocks,blockIdx);
 
-    let p2text='';
-    const researchPrompt = Prompts.docResearch(parsed.decision, context, retrieval);
-    await Backends.inferStream([
-      {role:'system',content:researchPrompt.system},
-      {role:'user',content:researchPrompt.user},
-    ],chunk=>{p2text+=chunk;});
+    const res=await Flow.run('doc_prompt',{
+      question, docs:names, rewrite_given:rewriteGiven, do_rewrite:!skipRewrite,
+      thes_terms:Pipeline.thesTerms(), example_doc:Pipeline.exampleDoc(),
+    },{
+      status:label=>{ document.getElementById('doc-status').textContent='⏳ Blok '+(blockIdx+1)+': '+label; },
+      // stream the final text only: the rewrite, or the findings when the rewrite is skipped
+      chunk:(id,t,acc,V)=>{ if (onChunk&&(id==='rewrite'||(id==='research'&&!V.do_rewrite))) onChunk(acc); },
+    });
+    if (res.stopped) throw new Error(res.reply);
 
-    const rewriteInstr=rewrite||'Write a clear, professional document section based on the research findings.';
-    let outputText='';
-    const rewritePrompt = Prompts.docRewrite(rewriteInstr, p2text);
-    await Backends.inferStream([
-      {role:'system',content:rewritePrompt.system},
-      {role:'user',content:rewritePrompt.user},
-    ],chunk=>{outputText+=chunk; if(onChunk) onChunk(outputText);});
-
-    const chunkIds=(parsed.citations||[]).map(c=>c.chunkId).filter(Boolean);
+    const V=res.vars, outputText=V.output;
+    const chunkIds=(V.p1?.citations||[]).map(c=>c.chunkId).filter(Boolean);
+    const ctxStep=Flow.steps('doc_prompt').find(x=>x.id==='ctx');
+    const used=Pipeline.contextChunks(V.chunks,ctxStep).map(c=>({
+      label:c.docName+' #'+c.id.split('_').at(-1), text:c.text, cited:chunkIds.includes(c.id),
+    }));
     return {
-      outputText,
+      outputText, notes:{warnings,chunks:used},
       provenance:{type:'prompt',model:State.chatModel||'Browser AI',embedModel:State.embedModel,
-        chunkIds,inputWords:wordCount(retrieval+' '+context),outputWords:wordCount(outputText)},
+        chunkIds,inputWords:wordCount(question+' '+V.context),outputWords:wordCount(outputText)},
     };
   },
 
@@ -1718,19 +2233,13 @@ const Doc = {
 
     for (const row of rows) {
       if (State.docStopRequested) break;
-      let context='';
-      if (row.doRag&&State.chunks.length>0) {
-        const p0=await Pipeline.queryExpand(row.title+' '+row.description);
-        const expanded=Thesaurus.expandTerms([...p0.search_terms,...p0.likely_contains]);
-        const chunks=await Retrieval.search(row.description,expanded,null);
-        context=Pipeline.buildContext(chunks)+'\n\n';
-      }
-
-      const rowPrompt = Prompts.docEvalRow(row, scopeText, context);
-      const result=await Backends.inferJSON([
-        {role:'system',content:rowPrompt.system},
-        {role:'user',content:rowPrompt.user},
-      ],120,0.1);
+      const res=await Flow.run('doc_eval',{
+        rag:row.doRag&&State.chunks.length>0,
+        row_title:row.title, row_description:row.description,
+        row_onestar:row.onestar, row_twostar:row.twostar, row_threestar:row.threestar,
+        scope_text:scopeText, thes_terms:Pipeline.thesTerms(), example_doc:Pipeline.exampleDoc(),
+      });
+      const result=res.vars.verdict;
 
       const numMatch=result.match(/★(\d)/); const starStr=(result.match(/★+/g)||[])[0]||'★';
       let stars=numMatch ? parseInt(numMatch[1]) : starStr.length;
@@ -1746,8 +2255,9 @@ const Doc = {
       if (onChunk) onChunk(outputLines.join('\n')+'\n\n'+runningTotal);
     }
 
-    const totalLine='\n\n**Totaal: '+totalStars+'/'+maxStars+' ★ ('+(Math.round(totalStars/maxStars*100))+'%)**';
-    const outputText=outputLines.join('\n')+totalLine;
+    if (!outputLines.length) throw new Error('Geen rubrieken uitgevoerd (gestopt?).');
+    if (State.docStopRequested) maxStars=outputLines.length*3;
+    const totalLine='\n\n**Totaal: '+totalStars+'/'+maxStars+' ★ ('+(Math.round(totalStars/maxStars*100))+'%)**';    const outputText=outputLines.join('\n')+totalLine;
 
     return {
       outputText,
@@ -1759,6 +2269,7 @@ const Doc = {
 
   /** Execute a single block by its current index; writes result into docResults, re-renders */
   async runBlockByIndex(blockIdx) {
+    if (!State.docRunning) State.docStopRequested=false;
     const source=document.getElementById('doc-source').value;
     const blocks=this.parseBlocks(source);
     if (blockIdx>=blocks.length) return;
@@ -1785,12 +2296,13 @@ const Doc = {
     try {
       let result;
       if (block.type==='prompt') {
-        result=await this.runPromptBlock(block,renderInto);
+        result=await this.runPromptBlock(blocks,blockIdx,renderInto);
       } else {
         result=await this.runEvalBlock(blocks,blockIdx,renderInto);
       }
 
       State.docResults[block.key]=result.outputText;
+      if (result.notes) State.docNotes[block.key]=result.notes; else delete State.docNotes[block.key];
       State.docProvenance.push(result.provenance);
       this.saveResults();
 
@@ -1837,24 +2349,26 @@ const Doc = {
   /** Render source + docResults + provenance log to the preview pane */
   render(source) {
     const blocks=this.parseBlocks(source);
-    let html='';
+    let html='', promptNo=0;
     blocks.forEach((block,i) => {
       if (block.type==='text') {
         html+=typeof marked!=='undefined'?marked.parse(block.content):block.content;
       } else if (block.type==='prompt') {
-        const {retrieval,rewrite}=this.parsePromptBlock(block.content);
+        const {retrieval,rewrite,as,docs}=this.parsePromptBlock(block.content);
+        promptNo++;
         html+=`<div class="doc-block" data-block="${i}">
           <div class="doc-block-header">
-            <span class="doc-block-type">✍️ Prompt</span>
+            <span class="doc-block-type">✍️ Prompt <code>$${promptNo}${as?' · $'+escapeHtml(as):''}</code></span>
             <button class="doc-run-btn" data-run="${i}">▶ Uitvoeren</button>
           </div>
           <div class="doc-block-body">
             <div class="doc-block-field"><strong>Ophalen:</strong> ${escapeHtml(retrieval||'(leeg)')}</div>
+            ${docs.length?`<div class="doc-block-field"><strong>Documenten:</strong> ${escapeHtml(docs.join(', '))}</div>`:''}
             ${rewrite?`<div class="doc-block-field"><strong>Herschrijven:</strong> ${escapeHtml(rewrite)}</div>`:''}
           </div>
         </div>`;
         const result=State.docResults[block.key];
-        if (result) html+=`<div class="doc-output">${this.wikifyHtml(typeof marked!=='undefined'?marked.parse(result):result)}</div>`;
+        if (result) html+=`<div class="doc-output">${this.wikifyHtml(typeof marked!=='undefined'?marked.parse(result):result)}</div>`+this.renderNotes(State.docNotes[block.key]);
       } else if (block.type==='evaluation') {
         const rows=this.parseEvalRows(block.content);
         html+=`<div class="doc-block" data-block="${i}">
@@ -1879,6 +2393,20 @@ const Doc = {
     const preview=document.getElementById('doc-preview');
     preview.innerHTML=html;
     UI.renderMermaid();
+  },
+
+  /** Warnings + numbered used-chunk list (hover = chunk text, same <abbr title> mechanism as the thesaurus). */
+  renderNotes(n) {
+    if (!n) return '';
+    let h='';
+    (n.warnings||[]).forEach(w=>{
+      h+=`<div style="margin:.4rem 0;padding:.35rem .6rem;border-left:3px solid #e0a800;background:#fff8e1;font-size:.82rem">⚠️ ${escapeHtml(w).replace(/`([^`]+)`/g,'<code>$1</code>')}</div>`;
+    });
+    if (n.chunks?.length) {
+      h+=`<div style="margin:.4rem 0;font-size:.8rem;color:#555"><strong>Gebruikte chunks</strong> (✓ = geciteerd door pass 1; beweeg de muis over een chunk om de tekst te zien)<ol style="margin:.2rem 0 0 1.2rem;padding:0">`+
+        n.chunks.map(c=>`<li><abbr class="wiki-term" title="${escapeHtml(c.text)}">${escapeHtml(c.label)}</abbr>${c.cited?' ✓':''}</li>`).join('')+`</ol></div>`;
+    }
+    return h;
   },
 
   /** Build the provenance log table as HTML (derived, not stored in source) */
@@ -1907,7 +2435,12 @@ const Doc = {
       out+= block.type==='text' ? block.content : block.raw;
       if ((block.type==='prompt'||block.type==='evaluation')) {
         const result=State.docResults[block.key];
-        if (result) out+='\n\n```output\n'+result.trim()+'\n```\n';
+        if (result) {
+          out+='\n\n```output\n'+result.trim()+'\n```\n';
+          const n=State.docNotes[block.key];
+          (n?.warnings||[]).forEach(w=>{ out+='\n> ⚠️ '+w+'\n'; });
+          if (n?.chunks?.length) out+='\nGebruikte chunks: '+n.chunks.map((c,i)=>(i+1)+'. '+c.label+(c.cited?' ✓':'')).join(' · ')+'\n';
+        }
       }
     });
     if (State.docProvenance.length) {
@@ -1928,18 +2461,20 @@ const Doc = {
     try {
       localStorage.setItem(this.RESULTS_KEY, JSON.stringify(State.docResults));
       localStorage.setItem(this.PROVENANCE_KEY, JSON.stringify(State.docProvenance));
+      localStorage.setItem(this.NOTES_KEY, JSON.stringify(State.docNotes));
     } catch {}
   },
   loadResults() {
     try {
       State.docResults = JSON.parse(localStorage.getItem(this.RESULTS_KEY) || '{}');
       State.docProvenance = JSON.parse(localStorage.getItem(this.PROVENANCE_KEY) || '[]');
-    } catch { State.docResults = {}; State.docProvenance = []; }
+      State.docNotes = JSON.parse(localStorage.getItem(this.NOTES_KEY) || '{}');
+    } catch { State.docResults = {}; State.docProvenance = []; State.docNotes = {}; }
   },
   /** Clear results + provenance — called when a new template.md is uploaded */
   resetResults() {
-    State.docResults = {}; State.docProvenance = [];
-    try { localStorage.removeItem(this.RESULTS_KEY); localStorage.removeItem(this.PROVENANCE_KEY); } catch {}
+    State.docResults = {}; State.docProvenance = []; State.docNotes = {};
+    try { localStorage.removeItem(this.RESULTS_KEY); localStorage.removeItem(this.PROVENANCE_KEY); localStorage.removeItem(this.NOTES_KEY); } catch {}
   },
 };
 
@@ -1989,9 +2524,6 @@ const Setup = {
       progress_callback:x=>{if(x.status==='progress') prog('LLM: '+Math.round(x.progress||0)+'%',50+(x.progress||0)*.5);}});
     prog('✓ Modellen geladen!',100);
   },
-  buildSystemPrompt(fileNames) {
-    return Prompts.pass1System(fileNames);
-  },
   async ingestFiles(files) {
     const isThes=f=>/thesaurus/i.test(f.name);
     const thesFile=Array.from(files).find(isThes);
@@ -2011,9 +2543,7 @@ const Setup = {
       const text=await file.text();
       try { await Cache.saveFile(file.name,text); } catch {}
       UI.renderDocument(file.name,text);
-      let raw=Chunker.chunk(text,file.name);
-      raw=await Chunker.enforceTokenLimit(raw);
-      raw.forEach((c,i)=>{ c.docName=file.name; c.prevId=i>0?raw[i-1].id:null; c.nextId=i<raw.length-1?raw[i+1].id:null; });
+      const raw=await Chunker.process(text,file.name);
       chunkCounts[file.name]=raw.length;
       allChunks.push(...raw);
     }
@@ -2030,7 +2560,7 @@ const Setup = {
           'MAX_CANDIDATE_SHARE_PER_DOC mitigates this, but splitting large documents into smaller files also helps.');
       }
     }
-    State.chatHistory=[{role:'system',content:this.buildSystemPrompt(docFiles.map(f=>f.name))}];
+    State.chatHistory=[];
 
     // Phase 2: embed (batch for API, sequential for TJS)
     if (State.backend==='transformers') {
@@ -2040,15 +2570,37 @@ const Setup = {
         catch(e) { alert('Embedding mislukt: '+e.message); throw e; }
       }
     } else {
-      const B=Config.EMBED_BATCH_SIZE;
-      for (let b=0;b<allChunks.length;b+=B) {
-        const batch=allChunks.slice(b,b+B);
-        this.progress('Vectoriseren… batch '+(Math.floor(b/B)+1)+'/'+Math.ceil(allChunks.length/B),b/allChunks.length*92);
-        try {
-          const vectors=await Backends.embedBatch(batch.map(c=>c.text),'document');
-          batch.forEach((c,i)=>{c.vector=vectors[i];});
-        } catch(e) { alert('Batch embedding mislukt: '+e.message); throw e; }
-      }
+const B = Config.EMBED_BATCH_SIZE;
+  const total = allChunks.length;
+
+  for (let b = 0; b < total; b += B) {
+    const batch = allChunks.slice(b, b + B);
+    const end = Math.min(b + batch.length, total);
+
+    this.progress(
+      `Vectoriseren… chunks ${b + 1}–${end}/${total}`,
+      (b / total) * 92
+    );
+
+    try {
+      const vectors = await Backends.embedBatch(
+        batch.map(c => c.text),
+        'document'
+      );
+
+      batch.forEach((c, i) => {
+        c.vector = vectors[i];
+      });
+
+      this.progress(
+        `Vectoriseren… ${end}/${total} chunks embedded`,
+        (end / total) * 92
+      );
+    } catch (e) {
+      alert('Embedding mislukt: ' + e.message);
+      throw e;
+    }
+  }
     }
     State.chunks=allChunks;
 
@@ -2079,7 +2631,7 @@ async function restoreSession(session, chunks, fileTexts) {
   State.rerankModel= session.rerankModel || '';
   State.chunks     = chunks;
   State.thesaurus  = session.thesaurus ? new Map(session.thesaurus) : null;
-  State.chatHistory= [{role:'system',content:Setup.buildSystemPrompt(session.fileNames||[])}];
+  State.chatHistory= [];
 
   const names=session.fileNames||[];
   for (const name of names) {
@@ -2234,7 +2786,7 @@ document.getElementById('clear-docs-btn').addEventListener('click', async () => 
   document.getElementById('docs-container').innerHTML='';
   document.getElementById('chat-history').innerHTML='';
   document.getElementById('state-output').textContent='{\n  "status": "Wachtend op invoer..."\n}';
-  document.getElementById('chat-label').textContent='Fietsbel CE — Multidisciplinair Overleg';
+  document.getElementById('chat-label').textContent='AIbaarAI — Multidisciplinair Overleg';
   document.getElementById('app').hidden=true;
   Setup.showPanel('panel-choice'); document.getElementById('setup-dialog').showModal();
 });
@@ -2286,7 +2838,7 @@ function launchApp(label) {
   const thesNote=State.thesaurus
     ? ' · 📚 '+Array.from(State.thesaurus.entries()).filter(([k,v])=>k===v.term.toLowerCase()).length+' termen'
     : '';
-  document.getElementById('chat-label').textContent='Fietsbel CE — '+label+thesNote;
+  document.getElementById('chat-label').textContent='AIbaarAI — '+label+thesNote;
   document.getElementById('setup-dialog').close();
   document.getElementById('app').hidden=false;
 
